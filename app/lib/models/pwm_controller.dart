@@ -1,5 +1,6 @@
 import 'channel.dart';
 import 'preset.dart';
+import 'telemetry.dart';
 
 class PWMController {
   final String id;
@@ -9,6 +10,7 @@ class PWMController {
   DateTime? connectionTime;
   List<Channel> channels;
   List<Preset> presets;
+  TelemetryData? telemetry;
 
   PWMController({
     required this.id,
@@ -18,7 +20,9 @@ class PWMController {
     this.connectionTime,
     List<Channel>? channels,
     List<Preset>? presets,
-  })  : channels = channels ?? List.generate(4, (index) => Channel(id: index, value: 0)),
+    this.telemetry,
+  })  : channels = channels ??
+            List.generate(4, (index) => Channel(id: index, value: 0)),
         presets = presets ?? [];
 
   // Validation methods
@@ -37,10 +41,15 @@ class PWMController {
   void disconnect() {
     isConnected = false;
     connectionTime = null;
+    telemetry = null;
+  }
+
+  void updateTelemetry(TelemetryData data) {
+    telemetry = data;
   }
 
   @override
   String toString() {
-    return 'PWMController(id: $id, name: $name, rssi: $rssi, isConnected: $isConnected)';
+    return 'PWMController(id: $id, name: $name, rssi: $rssi, isConnected: $isConnected, telemetry: $telemetry)';
   }
 }

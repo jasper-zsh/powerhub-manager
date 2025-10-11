@@ -184,10 +184,11 @@ Represents the complete state of all channels.
 
 1. **Device Discovery**: BLEService discovers devices and creates PWMController entities
 2. **Connection**: User connects to device, BLEConnection established
-3. **State Synchronization**: App reads current channel states from 0xFFF0 characteristic
-4. **Control**: User adjusts sliders or selects modes, specific ControlCommand created and sent to 0xFFF1 characteristic
-5. **Preset Management**: User creates presets with control commands, Preset entities stored locally and on device
-6. **Preset Execution**: User selects preset, command sent to 0xFFF4 characteristic to execute on device
+3. **State Synchronization**: App reads current channel targets from 0xFFF0 characteristic (4-byte snapshot)
+4. **Telemetry Polling**: App reads or subscribes to 0xFFF5 for Vin/temperature thresholds and status flags; user writes threshold updates to the same characteristic when needed
+5. **Control**: User adjusts sliders or selects modes; app builds `control_cmd_t` payloads and streams them via 0xFFF1 characteristic
+6. **Preset Management**: User creates presets with control commands, Preset entities stored locally and synchronized to 0xFFF3 blocks on device
+7. **Preset Execution**: User selects preset, command sent to 0xFFF4 characteristic to execute on device or sends `0x00` to cancel active modes
 
 ## Serialization
 
@@ -224,27 +225,14 @@ Channel states are serialized as 4-byte arrays for BLE communication with charac
 ```
 
 ### Control Command Serialization
-Control commands follow ESP32 specification for BLE characteristic 0xFFF1:
+All control commands share a `control_cmd_t` envelope serialized as `[mode][channel][payload...]`, where `channel` is 0–3 and payload length is mode-specific:
 
-SetCommand:
-```
-[0x00][Channel][Value]
-```
+- Mode `0x00` (Set): payload `[TargetDuty(0-255)]`, length = 1
+- Mode `0x01` (Fade): payload `[TargetDuty][Duration(uint16 BE)]`, length = 3
+- Mode `0x02` (Blink): payload `[Period(uint16 BE)]`, length = 2
+- Mode `0x03` (Strobe): payload `[FlashCount][TotalDuration(uint16 BE)][PauseDuration(uint16 BE)]`, length = 5
 
-FadeCommand:
-```
-[0x01][Channel][Target Value][Duration MSB][Duration LSB]
-```
-
-BlinkCommand:
-```
-[0x02][Channel][Period MSB][Period LSB]
-```
-
-StrobeCommand:
-```
-[0x03][Channel][Flash Count][Total Duration MSB][Total Duration LSB][Pause Duration MSB][Pause Duration LSB]
-```
+Multiple commands may be concatenated for a single 0xFFF1 write. Receiver validates mode, channel, and payload length for each segment.
 
 ### Preset Serialization for Device Storage
 Presets are serialized according to ESP32 specification for BLE characteristic 0xFFF3:
@@ -253,6 +241,21 @@ Presets are serialized according to ESP32 specification for BLE characteristic 0
 ```
 
 Each command follows the control command serialization format above.
+
+Deleting a preset is encoded as `[Preset ID][0x00]` (exactly 2 bytes). Preset IDs must be 0x01–0xFF; `0x00` is reserved and must not be written.
+
+### Telemetry Characteristic (0xFFF5)
+
+- **Read Response (12 bytes)**: `Vin(uint16 BE mV)` | `Temperature(int16 BE, 0.01°C)` | `HighThreshold(int16 BE, 0.01°C)` | `RecoverThreshold(int16 BE, 0.01°C)` | `StatusFlags(uint8)` | `Reserved(uint8)` | `Reserved(uint16)`
+- **Write Command (3 bytes)**: `[CommandId][Parameter(int16 BE)]` for commands `0x01` (sleep threshold mV), `0x02` (wake threshold mV), `0x03` (force sleep, ignore parameter), `0x04` (force wake, ignore parameter), `0x11` (set high-temp threshold 0.01°C), `0x12` (set recover threshold 0.01°C)
+- **Notify Payload (8 bytes)**: `Vin(uint16 BE mV)` | `Temperature(int16 BE, 0.01°C)` | `HighThreshold(int16 BE, 0.01°C)` | `RecoverThreshold(int16 BE, 0.01°C)`
+
+Status flag bit definitions:
+- bit0: 1 = thermal protection active
+- bit1: 1 = last temperature sample valid
+- bit2: reserved (send 0)
+- bit3: reserved (future deep sleep differentiation)
+- bit4–bit7: reserved, must be 0
 
 ## Relationships Diagram
 

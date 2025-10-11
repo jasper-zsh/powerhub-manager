@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:app/models/pwm_controller.dart';
 import 'package:app/models/channel.dart';
@@ -8,11 +10,12 @@ import 'package:app/models/control_command/set_command.dart';
 import 'package:app/models/control_command/fade_command.dart';
 import 'package:app/models/control_command/blink_command.dart';
 import 'package:app/models/control_command/strobe_command.dart';
+import 'package:app/models/telemetry.dart';
 
 class AppStateProvider with ChangeNotifier {
   final BLEService _bleService = BLEService();
   final StorageService _storageService = StorageService();
-  
+
   PWMController? _selectedDevice;
   List<PWMController> _discoveredDevices = [];
   List<Preset> _localPresets = [];
@@ -21,7 +24,10 @@ class AppStateProvider with ChangeNotifier {
   String _errorMessage = '';
   bool _isLoadingDevicePresets = false;
   String _devicePresetError = '';
-  
+  TelemetryData? _telemetry;
+  String _telemetryError = '';
+  StreamSubscription<TelemetryData>? _telemetrySubscription;
+
   // Getters
   PWMController? get selectedDevice => _selectedDevice;
   List<PWMController> get discoveredDevices => _discoveredDevices;
@@ -32,7 +38,11 @@ class AppStateProvider with ChangeNotifier {
   bool get isConnected => _selectedDevice?.isConnected ?? false;
   bool get isLoadingDevicePresets => _isLoadingDevicePresets;
   String get devicePresetError => _devicePresetError;
-  
+  TelemetryData? get telemetry => _telemetry ?? _selectedDevice?.telemetry;
+  String get telemetryError => _telemetryError;
+  bool get isThermalProtectionActive =>
+      telemetry?.isThermalProtectionActive ?? false;
+
   // Initialize the provider
   Future<void> init() async {
     debugPrint('AppStateProvider: Initializing...');
@@ -40,72 +50,88 @@ class AppStateProvider with ChangeNotifier {
     await loadLocalPresets();
     debugPrint('AppStateProvider: Initialization completed');
   }
-  
+
   // Scan for devices
   Future<void> scanForDevices({int timeout = 10}) async {
     _isScanning = true;
     _errorMessage = '';
     debugPrint('AppStateProvider: Starting device scan...');
     notifyListeners();
-    
+
     try {
       _discoveredDevices = await _bleService.scanForDevices(timeout: timeout);
-      debugPrint('AppStateProvider: Scan completed. Found ${_discoveredDevices.length} devices.');
+      debugPrint(
+        'AppStateProvider: Scan completed. Found ${_discoveredDevices.length} devices.',
+      );
     } catch (e) {
       debugPrint('AppStateProvider: Scan failed with error: $e');
       String error = e.toString();
       if (error.contains('PERMISSION_DENIED')) {
-        _errorMessage = 'Bluetooth permission denied. Please grant Bluetooth permissions in app settings and try again.';
+        _errorMessage =
+            'Bluetooth permission denied. Please grant Bluetooth permissions in app settings and try again.';
       } else if (error.contains('BLE_NOT_SUPPORTED')) {
         _errorMessage = 'Bluetooth is not supported on this device.';
       } else {
-        _errorMessage = 'Failed to scan for devices. Please make sure Bluetooth is enabled and try again.';
+        _errorMessage =
+            'Failed to scan for devices. Please make sure Bluetooth is enabled and try again.';
       }
     } finally {
       _isScanning = false;
       notifyListeners();
     }
   }
-  
+
   // Connect to a device
   Future<void> connectToDevice(String deviceId) async {
     debugPrint('AppStateProvider: Attempting to connect to device: $deviceId');
     _errorMessage = '';
     notifyListeners();
-    
+
     try {
       await _bleService.connect(deviceId);
-      
+
       PWMController? device = _discoveredDevices.firstWhere(
         (d) => d.id == deviceId,
         orElse: () {
-          debugPrint('Device not found in discovered devices, creating new one');
+          debugPrint(
+            'Device not found in discovered devices, creating new one',
+          );
           return PWMController(id: deviceId, name: 'Unknown Device', rssi: 0);
         },
       );
-      
+
       device.connect();
       _selectedDevice = device;
-      debugPrint('AppStateProvider: Successfully connected to device: ${device.name}');
-      
-      debugPrint('AppStateProvider: Attempting to read initial channel states...');
+      debugPrint(
+        'AppStateProvider: Successfully connected to device: ${device.name}',
+      );
+
+      debugPrint(
+        'AppStateProvider: Attempting to read initial channel states...',
+      );
       await readChannelStates();
       debugPrint('AppStateProvider: Completed initial channel states read');
 
       debugPrint('AppStateProvider: Attempting to load device presets...');
       await loadDevicePresets();
       debugPrint('AppStateProvider: Completed loading device presets');
+
+      debugPrint('AppStateProvider: Initializing telemetry stream...');
+      await _initializeTelemetry();
+      debugPrint('AppStateProvider: Telemetry initialized');
     } catch (e) {
       debugPrint('AppStateProvider: Connection failed with error: $e');
       String error = e.toString();
       if (error.contains('DEVICE_NOT_FOUND')) {
-        _errorMessage = 'Device not found. Please make sure the device is powered on and in range.';
+        _errorMessage =
+            'Device not found. Please make sure the device is powered on and in range.';
       } else if (error.contains('CONNECTION_FAILED')) {
         _errorMessage = 'Failed to connect to device. Please try again.';
       } else if (error.contains('TIMEOUT')) {
         _errorMessage = 'Connection timeout. Please try again.';
       } else if (error.contains('PERMISSION')) {
-        _errorMessage = 'Connection failed due to permissions. Please check Bluetooth permissions.';
+        _errorMessage =
+            'Connection failed due to permissions. Please check Bluetooth permissions.';
       } else {
         _errorMessage = 'Connection failed: $error';
       }
@@ -113,15 +139,22 @@ class AppStateProvider with ChangeNotifier {
       notifyListeners();
     }
   }
-  
+
   // Disconnect from the current device
   Future<void> disconnectFromDevice() async {
     debugPrint('AppStateProvider: Disconnecting from device');
     _errorMessage = '';
     notifyListeners();
-    
+
     try {
       await _bleService.disconnect();
+      if (_telemetrySubscription != null) {
+        await _telemetrySubscription!.cancel();
+        _telemetrySubscription = null;
+      }
+      await _bleService.disableTelemetryNotifications();
+      _telemetry = null;
+      _telemetryError = '';
       _selectedDevice?.disconnect();
       _selectedDevice = null;
       _devicePresets = [];
@@ -135,28 +168,38 @@ class AppStateProvider with ChangeNotifier {
       notifyListeners();
     }
   }
-  
+
   // Read channel states from the connected device
   Future<void> readChannelStates() async {
     if (_selectedDevice == null || !_selectedDevice!.isConnected) {
-      debugPrint('AppStateProvider: Not connected to device, skipping readChannelStates');
+      debugPrint(
+        'AppStateProvider: Not connected to device, skipping readChannelStates',
+      );
       return;
     }
-    
+
     debugPrint('AppStateProvider: Reading channel states...');
     _errorMessage = '';
     notifyListeners();
-    
+
     try {
       List<int> states = await _bleService.readChannelStates();
       debugPrint('AppStateProvider: Read channel states: $states');
-      
-      for (int i = 0; i < states.length && i < _selectedDevice!.channels.length; i++) {
+
+      for (
+        int i = 0;
+        i < states.length && i < _selectedDevice!.channels.length;
+        i++
+      ) {
         _selectedDevice!.channels[i].updateValue(states[i]);
-        debugPrint('AppStateProvider: Updated channel $i to value ${states[i]}');
+        debugPrint(
+          'AppStateProvider: Updated channel $i to value ${states[i]}',
+        );
       }
     } catch (e) {
-      debugPrint('AppStateProvider: Failed to read channel states with error: $e');
+      debugPrint(
+        'AppStateProvider: Failed to read channel states with error: $e',
+      );
       String error = e.toString();
       if (error.contains('NOT_CONNECTED')) {
         _errorMessage = 'Not connected to device.';
@@ -176,9 +219,152 @@ class AppStateProvider with ChangeNotifier {
     }
   }
 
+  Future<void> _refreshTelemetrySnapshot({bool fireListeners = true}) async {
+    if (_selectedDevice == null || !_selectedDevice!.isConnected) {
+      return;
+    }
+
+    try {
+      final snapshot = await _bleService.readTelemetrySnapshot();
+      _telemetry = snapshot;
+      _selectedDevice?.updateTelemetry(snapshot);
+      _telemetryError = '';
+    } catch (e) {
+      _telemetryError = '读取设备遥测失败: $e';
+    } finally {
+      if (fireListeners) {
+        notifyListeners();
+      }
+    }
+  }
+
+  Future<void> _initializeTelemetry() async {
+    if (_selectedDevice == null || !_selectedDevice!.isConnected) {
+      debugPrint(
+        'AppStateProvider: Telemetry initialization skipped - no device connected',
+      );
+      return;
+    }
+
+    await _refreshTelemetrySnapshot();
+
+    try {
+      final stream = await _bleService.enableTelemetryNotifications();
+
+      if (_telemetrySubscription != null) {
+        await _telemetrySubscription!.cancel();
+      }
+
+      _telemetrySubscription = stream.listen(
+        (telemetryUpdate) {
+          _telemetry = telemetryUpdate;
+          _selectedDevice?.updateTelemetry(telemetryUpdate);
+          _telemetryError = '';
+          notifyListeners();
+        },
+        onError: (error) {
+          _telemetryError = '遥测更新失败: $error';
+          notifyListeners();
+        },
+      );
+    } catch (e) {
+      _telemetryError = '遥测订阅失败: $e';
+      notifyListeners();
+    }
+  }
+
+  Future<void> refreshTelemetry() async {
+    await _refreshTelemetrySnapshot();
+  }
+
+  Future<void> setSleepThreshold(int millivolts) async {
+    await _sendTelemetryCommand(
+      commandId: 0x01,
+      parameter: millivolts,
+      validator: (value) => value >= 0 && value <= 65535,
+      validationError: '睡眠电压阈值必须在 0-65535 mV 范围内。',
+    );
+  }
+
+  Future<void> setWakeThreshold(int millivolts) async {
+    await _sendTelemetryCommand(
+      commandId: 0x02,
+      parameter: millivolts,
+      validator: (value) => value >= 0 && value <= 65535,
+      validationError: '唤醒电压阈值必须在 0-65535 mV 范围内。',
+    );
+  }
+
+  Future<void> forceSleep() async {
+    await _sendTelemetryCommand(
+      commandId: 0x03,
+      parameter: 0,
+      refreshAfter: true,
+    );
+  }
+
+  Future<void> forceWake() async {
+    await _sendTelemetryCommand(
+      commandId: 0x04,
+      parameter: 0,
+      refreshAfter: true,
+    );
+  }
+
+  Future<void> setHighTemperatureThreshold(int centiDegrees) async {
+    await _sendTelemetryCommand(
+      commandId: 0x11,
+      parameter: centiDegrees,
+      validator: (value) => value >= -32768 && value <= 32767,
+      validationError: '高温阈值必须在 -327.68 至 327.67 摄氏度之间。',
+    );
+  }
+
+  Future<void> setRecoverTemperatureThreshold(int centiDegrees) async {
+    await _sendTelemetryCommand(
+      commandId: 0x12,
+      parameter: centiDegrees,
+      validator: (value) => value >= -32768 && value <= 32767,
+      validationError: '恢复阈值必须在 -327.68 至 327.67 摄氏度之间。',
+    );
+  }
+
+  Future<void> _sendTelemetryCommand({
+    required int commandId,
+    required int parameter,
+    bool Function(int value)? validator,
+    String? validationError,
+    bool refreshAfter = true,
+  }) async {
+    if (_selectedDevice == null || !_selectedDevice!.isConnected) {
+      throw Exception('NOT_CONNECTED');
+    }
+
+    if (validator != null && !validator(parameter)) {
+      throw ArgumentError(validationError ?? '遥测参数不合法');
+    }
+
+    try {
+      await _bleService.sendTelemetryCommand(
+        commandId: commandId,
+        parameter: parameter,
+      );
+
+      if (refreshAfter) {
+        await _refreshTelemetrySnapshot();
+      }
+    } catch (e) {
+      _telemetryError = '遥测指令发送失败: $e';
+      notifyListeners();
+      rethrow;
+    }
+  }
+
   Future<void> loadDevicePresets() async {
     if (_selectedDevice == null || !_selectedDevice!.isConnected) {
-      debugPrint('AppStateProvider: loadDevicePresets skipped - no device connected');
+      debugPrint(
+        'AppStateProvider: loadDevicePresets skipped - no device connected',
+      );
       _devicePresets = [];
       _devicePresetError = '';
       _isLoadingDevicePresets = false;
@@ -194,9 +380,13 @@ class AppStateProvider with ChangeNotifier {
     try {
       final presets = await _bleService.readAllPresets();
       _devicePresets = presets;
-      debugPrint('AppStateProvider: Loaded ${presets.length} presets from device');
+      debugPrint(
+        'AppStateProvider: Loaded ${presets.length} presets from device',
+      );
     } catch (e) {
-      debugPrint('AppStateProvider: Failed to load device presets with error: $e');
+      debugPrint(
+        'AppStateProvider: Failed to load device presets with error: $e',
+      );
       _devicePresetError = '读取设备预设失败: $e';
     } finally {
       _isLoadingDevicePresets = false;
@@ -207,29 +397,40 @@ class AppStateProvider with ChangeNotifier {
   // Update a channel value
   Future<void> updateChannelValue(int channelId, int value) async {
     if (_selectedDevice == null || !_selectedDevice!.isConnected) {
-      debugPrint('AppStateProvider: updateChannelValue skipped - no device connected');
+      debugPrint(
+        'AppStateProvider: updateChannelValue skipped - no device connected',
+      );
       return;
     }
 
     if (channelId < 0 || channelId >= _selectedDevice!.channels.length) {
-      debugPrint('AppStateProvider: updateChannelValue received invalid channel ID: $channelId');
+      debugPrint(
+        'AppStateProvider: updateChannelValue received invalid channel ID: $channelId',
+      );
       return;
     }
-    
+
     _errorMessage = '';
     debugPrint('AppStateProvider: Updating channel $channelId to value $value');
-    
+
     final previousValue = _selectedDevice!.channels[channelId].value;
     _selectedDevice!.channels[channelId].updateValue(value);
     notifyListeners();
 
     try {
-      debugPrint('AppStateProvider: Sending SetCommand to channel $channelId with value $value');
-      await _bleService
-          .sendSetCommand(SetCommand(channel: channelId, value: value));
-      debugPrint('AppStateProvider: SetCommand completed for channel $channelId');
+      debugPrint(
+        'AppStateProvider: Sending SetCommand to channel $channelId with value $value',
+      );
+      await _bleService.sendSetCommand(
+        SetCommand(channel: channelId, value: value),
+      );
+      debugPrint(
+        'AppStateProvider: SetCommand completed for channel $channelId',
+      );
     } catch (e) {
-      debugPrint('AppStateProvider: SetCommand failed for channel $channelId with error: $e');
+      debugPrint(
+        'AppStateProvider: SetCommand failed for channel $channelId with error: $e',
+      );
       _selectedDevice!.channels[channelId].updateValue(previousValue);
       _errorMessage = '发送设置命令失败: $e';
     } finally {
@@ -243,21 +444,26 @@ class AppStateProvider with ChangeNotifier {
     required int duration,
   }) async {
     if (_selectedDevice == null || !_selectedDevice!.isConnected) {
-      debugPrint('AppStateProvider: sendFadeCommand skipped - no device connected');
+      debugPrint(
+        'AppStateProvider: sendFadeCommand skipped - no device connected',
+      );
       throw Exception('NOT_CONNECTED');
     }
 
     debugPrint(
-        'AppStateProvider: Sending FadeCommand channel=$channelId target=$targetValue duration=$duration');
+      'AppStateProvider: Sending FadeCommand channel=$channelId target=$targetValue duration=$duration',
+    );
     _errorMessage = '';
     notifyListeners();
 
     try {
-      await _bleService.sendFadeCommand(FadeCommand(
-        channel: channelId,
-        targetValue: targetValue,
-        duration: duration,
-      ));
+      await _bleService.sendFadeCommand(
+        FadeCommand(
+          channel: channelId,
+          targetValue: targetValue,
+          duration: duration,
+        ),
+      );
 
       if (channelId >= 0 && channelId < _selectedDevice!.channels.length) {
         _selectedDevice!.channels[channelId].updateValue(targetValue);
@@ -278,20 +484,22 @@ class AppStateProvider with ChangeNotifier {
     required int period,
   }) async {
     if (_selectedDevice == null || !_selectedDevice!.isConnected) {
-      debugPrint('AppStateProvider: sendBlinkCommand skipped - no device connected');
+      debugPrint(
+        'AppStateProvider: sendBlinkCommand skipped - no device connected',
+      );
       throw Exception('NOT_CONNECTED');
     }
 
     debugPrint(
-        'AppStateProvider: Sending BlinkCommand channel=$channelId period=$period');
+      'AppStateProvider: Sending BlinkCommand channel=$channelId period=$period',
+    );
     _errorMessage = '';
     notifyListeners();
 
     try {
-      await _bleService.sendBlinkCommand(BlinkCommand(
-        channel: channelId,
-        period: period,
-      ));
+      await _bleService.sendBlinkCommand(
+        BlinkCommand(channel: channelId, period: period),
+      );
 
       debugPrint('AppStateProvider: BlinkCommand sent successfully');
     } catch (e) {
@@ -310,22 +518,27 @@ class AppStateProvider with ChangeNotifier {
     required int pauseDuration,
   }) async {
     if (_selectedDevice == null || !_selectedDevice!.isConnected) {
-      debugPrint('AppStateProvider: sendStrobeCommand skipped - no device connected');
+      debugPrint(
+        'AppStateProvider: sendStrobeCommand skipped - no device connected',
+      );
       throw Exception('NOT_CONNECTED');
     }
 
     debugPrint(
-        'AppStateProvider: Sending StrobeCommand channel=$channelId flashCount=$flashCount totalDuration=$totalDuration pauseDuration=$pauseDuration');
+      'AppStateProvider: Sending StrobeCommand channel=$channelId flashCount=$flashCount totalDuration=$totalDuration pauseDuration=$pauseDuration',
+    );
     _errorMessage = '';
     notifyListeners();
 
     try {
-      await _bleService.sendStrobeCommand(StrobeCommand(
-        channel: channelId,
-        flashCount: flashCount,
-        totalDuration: totalDuration,
-        pauseDuration: pauseDuration,
-      ));
+      await _bleService.sendStrobeCommand(
+        StrobeCommand(
+          channel: channelId,
+          flashCount: flashCount,
+          totalDuration: totalDuration,
+          pauseDuration: pauseDuration,
+        ),
+      );
 
       debugPrint('AppStateProvider: StrobeCommand sent successfully');
     } catch (e) {
@@ -336,12 +549,12 @@ class AppStateProvider with ChangeNotifier {
       notifyListeners();
     }
   }
-  
+
   // Load local presets from storage
   Future<void> loadLocalPresets() async {
     _errorMessage = '';
     notifyListeners();
-    
+
     try {
       Map<String, dynamic> presetsMap = await _storageService.loadAllPresets();
       _localPresets = presetsMap.values.cast<Preset>().toList();
@@ -351,12 +564,12 @@ class AppStateProvider with ChangeNotifier {
       notifyListeners();
     }
   }
-  
+
   // Save a preset locally
   Future<void> saveLocalPreset(Preset preset) async {
     _errorMessage = '';
     notifyListeners();
-    
+
     try {
       await _storageService.savePreset(preset);
       await loadLocalPresets();
@@ -366,12 +579,12 @@ class AppStateProvider with ChangeNotifier {
       notifyListeners();
     }
   }
-  
+
   // Delete a local preset
   Future<void> deleteLocalPreset(int presetId) async {
     _errorMessage = '';
     notifyListeners();
-    
+
     try {
       await _storageService.deletePreset(presetId);
       await loadLocalPresets();
@@ -381,16 +594,16 @@ class AppStateProvider with ChangeNotifier {
       notifyListeners();
     }
   }
-  
+
   // Execute a preset
   Future<void> executePreset(int presetId) async {
     if (_selectedDevice == null || !_selectedDevice!.isConnected) {
       return;
     }
-    
+
     _errorMessage = '';
     notifyListeners();
-    
+
     try {
       await _bleService.executePreset(presetId);
       await readChannelStates();
@@ -417,5 +630,12 @@ class AppStateProvider with ChangeNotifier {
     } finally {
       notifyListeners();
     }
+  }
+
+  @override
+  void dispose() {
+    _telemetrySubscription?.cancel();
+    unawaited(_bleService.disableTelemetryNotifications());
+    super.dispose();
   }
 }

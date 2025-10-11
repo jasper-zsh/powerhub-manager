@@ -32,14 +32,15 @@
 ## Summary
 Create a Flutter mobile application that can connect to an ESP32-based 4-channel PWM controller via Bluetooth Low Energy (BLE) to control each channel's PWM output and manage presets. The app will provide real-time control of PWM values (0-255) through sliders, allow users to create and recall named presets, and maintain a persistent connection to the device.
 
-The ESP32 controller uses custom BLE characteristics for communication:
-- 0xFFF0: Read channel states (4 bytes, 0-255)
-- 0xFFF1: Write control commands
-- 0xFFF2: Read all presets
-- 0xFFF3: Write a single preset
-- 0xFFF4: Execute a preset
+The ESP32 controller exposes a custom 128-bit GATT service `5E0B0001-6F72-4761-8E3E-7A1C1B5F9B11` with the following characteristics:
+- 0xFFF0 (READ): 4-byte payload representing CH1–CH4 target duty cycles (0–255)
+- 0xFFF1 (WRITE/WRITE_NO_RSP): Stream of concatenated control commands encoded as `[mode][channel][payload…]`
+- 0xFFF2 (READ): Sequential binary dump of all presets (see preset structure)
+- 0xFFF3 (WRITE/WRITE_NO_RSP): Upload a single preset block; 2-byte payload with `CommandCount=0` deletes the preset
+- 0xFFF4 (WRITE/WRITE_NO_RSP): 1-byte preset selector; `0x00` cancels modes and turns outputs off
+- 0xFFF5 (READ/WRITE/WRITE_NO_RSP/NOTIFY): Environmental and power telemetry plus device control commands
 
-According to the ESP32 documentation, the controller supports advanced modes including fade, blink, and strobe operations that must be properly implemented in the Flutter app with separate data structures for each command type to improve readability.
+According to the ESP32 documentation, the controller supports advanced modes including fade, blink, and strobe operations. Each command is transported via a unified `control_cmd_t` envelope with mode-specific payload layouts, and the app must validate payload length, channel range, and parameter legality before transmission.
 
 ## Technical Context
 **Language/Version**: Dart/Flutter 3.x, minimum SDK version 2.17  

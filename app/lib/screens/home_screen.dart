@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import 'package:app/providers/app_state_provider.dart';
 import 'package:app/screens/channel_control_screen.dart';
 import 'package:app/screens/preset_management_screen.dart';
+import 'package:app/screens/telemetry_settings_screen.dart';
 import 'package:app/widgets/connection_status.dart';
 
 // For debugging
@@ -27,9 +28,17 @@ class HomeScreen extends StatelessWidget {
               ),
               IconButton(
                 icon: const Icon(Icons.settings),
-                onPressed: () {
-                  // TODO: Implement settings screen
-                },
+                onPressed: appState.isConnected
+                    ? () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) =>
+                                const TelemetrySettingsScreen(),
+                          ),
+                        );
+                      }
+                    : null,
               ),
             ],
           ),
@@ -37,13 +46,13 @@ class HomeScreen extends StatelessWidget {
             children: [
               // Connection status
               ConnectionStatus(),
-              
+
               // Device selection or connection button
               if (appState.selectedDevice == null)
                 _buildDeviceSelectionSection(context, appState)
               else
                 _buildConnectedDeviceSection(context, appState),
-              
+
               // Navigation buttons
               Expanded(
                 child: Column(
@@ -57,7 +66,8 @@ class HomeScreen extends StatelessWidget {
                                 Navigator.push(
                                   context,
                                   MaterialPageRoute(
-                                    builder: (context) => const ChannelControlScreen(),
+                                    builder: (context) =>
+                                        const ChannelControlScreen(),
                                   ),
                                 );
                               }
@@ -73,7 +83,8 @@ class HomeScreen extends StatelessWidget {
                           Navigator.push(
                             context,
                             MaterialPageRoute(
-                              builder: (context) => const PresetManagementScreen(),
+                              builder: (context) =>
+                                  const PresetManagementScreen(),
                             ),
                           );
                         },
@@ -90,9 +101,14 @@ class HomeScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildDeviceSelectionSection(BuildContext context, AppStateProvider appState) {
-    debugPrint('Building device selection section. Discovered devices: ${appState.discoveredDevices.length}');
-    
+  Widget _buildDeviceSelectionSection(
+    BuildContext context,
+    AppStateProvider appState,
+  ) {
+    debugPrint(
+      'Building device selection section. Discovered devices: ${appState.discoveredDevices.length}',
+    );
+
     return Column(
       children: [
         const Padding(
@@ -138,7 +154,9 @@ class HomeScreen extends StatelessWidget {
                   title: Text(device.name),
                   subtitle: Text('RSSI: ${device.rssi}'),
                   onTap: () {
-                    debugPrint('User tapped on device: ${device.name} (${device.id})');
+                    debugPrint(
+                      'User tapped on device: ${device.name} (${device.id})',
+                    );
                     appState.connectToDevice(device.id);
                   },
                 );
@@ -154,7 +172,10 @@ class HomeScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildConnectedDeviceSection(BuildContext context, AppStateProvider appState) {
+  Widget _buildConnectedDeviceSection(
+    BuildContext context,
+    AppStateProvider appState,
+  ) {
     return Column(
       children: [
         const Padding(

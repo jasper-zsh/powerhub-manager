@@ -1,5 +1,7 @@
 # API Contracts: Flutter BLE App for ESP32 PWM Controller
 
+All BLE operations target the custom service UUID `5E0B0001-6F72-4761-8E3E-7A1C1B5F9B11`, which exposes characteristics 0xFFF0–0xFFF5. Multi-byte fields are big-endian unless otherwise noted.
+
 ## 1. Device Management API
 
 ### Scan for Devices
@@ -60,7 +62,7 @@
 - deviceId: string (BLE device ID)
 
 **Response**:
-- channels: List<int> (4 values, 0-255)
+- channels: List<int> (4 values, 0-255) parsed from 4-byte payload `[CH1][CH2][CH3][CH4]`
 
 **Error Codes**:
 - READ_FAILED: Failed to read characteristic
@@ -86,6 +88,8 @@
 - INVALID_CHANNEL: Channel number out of range
 - INVALID_VALUE: Value out of range
 
+**Encoding Notes**: Payload serialized as `[0x00][channel][value]`. Multiple commands may be concatenated in one write.
+
 ### Send Fade Command
 **Purpose**: Send a fade/transition command to a specific channel
 
@@ -108,6 +112,8 @@
 - INVALID_TARGET_VALUE: Target value out of range
 - INVALID_DURATION: Duration out of range
 
+**Encoding Notes**: Payload serialized as `[0x01][channel][targetValue][durationMSB][durationLSB]`.
+
 ### Send Blink Command
 **Purpose**: Send a blink command to a specific channel
 
@@ -127,6 +133,8 @@
 - WRITE_FAILED: Failed to write characteristic
 - INVALID_CHANNEL: Channel number out of range
 - INVALID_PERIOD: Period out of range
+
+**Encoding Notes**: Payload serialized as `[0x02][channel][periodMSB][periodLSB]`.
 
 ### Send Strobe Command
 **Purpose**: Send a strobe command to a specific channel
@@ -152,6 +160,8 @@
 - INVALID_TOTAL_DURATION: Total duration out of range
 - INVALID_PAUSE_DURATION: Pause duration out of range
 
+**Encoding Notes**: Payload serialized as `[0x03][channel][flashCount][totalDurationMSB][totalDurationLSB][pauseDurationMSB][pauseDurationLSB]`.
+
 ## 3. Preset Management API
 
 ### Read All Presets from Device
@@ -163,10 +173,8 @@
 - deviceId: string (BLE device ID)
 
 **Response**:
-- presets: List<Preset>
-  - id: int (preset ID, 1-255)
-  - commandCount: int (number of commands in preset)
-  - commands: List<ControlCommand> (list of commands)
+- rawPresetData: Uint8List (binary stream of `[PresetID][CommandCount][Commands…]` blocks)
+- presets: List<Preset> (parsed client-side; each preset uses control command serialization)
 
 **Error Codes**:
 - READ_FAILED: Failed to read characteristic
@@ -194,6 +202,8 @@
 - INVALID_COMMAND_COUNT: Command count doesn't match commands list
 - INVALID_COMMANDS: One or more commands are invalid
 
+**Encoding Notes**: Serialize as `[PresetID][CommandCount][Command1…CommandN]`. To delete a preset, send `[PresetID][0x00]` (exactly 2 bytes).
+
 ### Delete Preset from Device
 **Purpose**: Remove a preset from the device
 
@@ -211,7 +221,7 @@
 - WRITE_FAILED: Failed to write characteristic
 - INVALID_PRESET_ID: Preset ID out of range or reserved
 
-**Note**: To delete a preset, send a preset with the same ID but commandCount = 0
+**Note**: Deletion semantics already covered by encoding `[PresetID][0x00]`.
 
 ### Execute Preset
 **Purpose**: Apply a preset to the channels
@@ -221,7 +231,7 @@
 **Request**:
 - deviceId: string (BLE device ID)
 - presetId: int (preset ID to execute, 0-255)
-  - 0 = turn off all channels
+  - 0 = cancel all modes and turn off channels
   - 1-255 = execute specific preset
 
 **Response**:
@@ -232,7 +242,72 @@
 - WRITE_FAILED: Failed to write characteristic
 - INVALID_PRESET_ID: Preset ID out of range
 
-## 4. Local Storage API
+## 4. Telemetry & Threshold API
+
+### Read Device Telemetry
+**Purpose**: Retrieve power and thermal telemetry snapshot
+
+**Method**: BLE Read Characteristic
+**Characteristic**: 0xFFF5
+**Request**:
+- deviceId: string (BLE device ID)
+
+**Response**:
+- vinMillivolts: int (uint16 BE)
+- temperatureCentiDegrees: int (int16 BE)
+- highThresholdCentiDegrees: int (int16 BE)
+- recoverThresholdCentiDegrees: int (int16 BE)
+- statusFlags: int (uint8)
+- reservedByte: int (uint8)
+- reservedWord: int (uint16)
+
+**Error Codes**:
+- READ_FAILED: Failed to read characteristic
+- INVALID_DATA: Received data format is incorrect
+
+### Subscribe to Telemetry Notifications
+**Purpose**: Receive streaming telemetry updates
+
+**Method**: BLE Notify
+**Characteristic**: 0xFFF5
+**Request**:
+- deviceId: string (BLE device ID)
+
+**Notification Payload**:
+- vinMillivolts: int (uint16 BE)
+- temperatureCentiDegrees: int (int16 BE)
+- highThresholdCentiDegrees: int (int16 BE)
+- recoverThresholdCentiDegrees: int (int16 BE)
+
+**Status Flags (bitmask)**:
+- bit0: 1 = thermal protection active
+- bit1: 1 = last temperature sample valid
+- bit2: reserved, transmit 0
+- bit3: reserved for future deep-sleep policy (transmit 0)
+- bit4-bit7: reserved, transmit 0
+
+### Send Telemetry Command
+**Purpose**: Adjust thresholds or trigger sleep/wake commands
+
+**Method**: BLE Write Characteristic / Write Without Response
+**Characteristic**: 0xFFF5
+**Request**:
+- deviceId: string (BLE device ID)
+- commandId: int (0x01, 0x02, 0x03, 0x04, 0x11, 0x12)
+- parameter: int (int16 BE, ignored for 0x03 and 0x04 but still transmitted)
+
+**Response**:
+- success: bool
+- error: string? (if success is false)
+
+**Error Codes**:
+- WRITE_FAILED: Failed to write characteristic
+- INVALID_COMMAND: Unsupported command ID
+- INVALID_PARAMETER: Parameter out of range
+
+**Encoding Notes**: Serialize as `[commandId][parameterMSB][parameterLSB]`.
+
+## 5. Local Storage API
 
 ### Save Local Preset
 **Purpose**: Save a preset to local storage

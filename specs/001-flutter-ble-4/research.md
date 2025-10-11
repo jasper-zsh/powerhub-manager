@@ -20,12 +20,13 @@ Use `flutter_blue_plus` as the primary BLE library for cross-platform compatibil
 ## 2. ESP32 BLE Communication Patterns
 
 ### Decision
-Implement custom protocol based on ESP32 characteristic definitions:
-- 0xFFF0: Read channel states (4 bytes)
-- 0xFFF1: Write control commands
-- 0xFFF2: Read all presets
-- 0xFFF3: Write a single preset
-- 0xFFF4: Execute a preset
+Implement custom protocol based on ESP32 characteristic definitions within service UUID `5E0B0001-6F72-4761-8E3E-7A1C1B5F9B11`:
+- 0xFFF0 (READ): 4-byte channel targets for CH1–CH4
+- 0xFFF1 (WRITE/WRITE_NO_RSP): Concatenated `control_cmd_t` segments `[mode][channel][payload…]`
+- 0xFFF2 (READ): Sequential binary stream of all preset blocks
+- 0xFFF3 (WRITE/WRITE_NO_RSP): Upload/delete a single preset block (`CommandCount=0` deletes)
+- 0xFFF4 (WRITE/WRITE_NO_RSP): Execute preset ID or cancel with `0x00`
+- 0xFFF5 (READ/WRITE/NOTIFY): Power/thermal telemetry and threshold commands
 
 ### Rationale
 - Direct mapping to ESP32 implementation ensures compatibility
@@ -34,8 +35,9 @@ Implement custom protocol based on ESP32 characteristic definitions:
 
 ### Implementation Notes
 - All data transmission must use big-endian byte order
-- Control commands have specific binary formats that must be constructed correctly
-- Preset data serialization/deserialization must match ESP32 format
+- Control commands share a common envelope; validate payload length, channel range, and mode before send
+- Preset serialization/deserialization must honor device format, including delete semantics
+- Telemetry characteristic 0xFFF5 requires handling read responses, notify payloads, and short write commands for threshold adjustments
 
 ## 3. Cross-Platform BLE Compatibility
 
