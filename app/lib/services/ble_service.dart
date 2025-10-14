@@ -1,6 +1,7 @@
+import 'dart:async';
+
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:app/models/pwm_controller.dart';
-import 'package:app/models/channel.dart';
 import 'package:app/models/preset.dart';
 import 'package:app/models/control_command/control_command.dart';
 import 'package:app/models/control_command/set_command.dart';
@@ -357,6 +358,60 @@ class BLEService {
       _lastTelemetry = null;
       debugPrint('Cleaned up device and service references');
     }
+  }
+
+  Future<Set<String>> scanForControllerIds(
+    Iterable<String> controllerIds, {
+    Duration timeout = const Duration(seconds: 5),
+  }) async {
+    final targets = controllerIds.toSet();
+    if (targets.isEmpty) {
+      return <String>{};
+    }
+
+    if (!await isSupported()) {
+      return <String>{};
+    }
+
+    try {
+      await _requestPermissions();
+    } catch (error) {
+      debugPrint('scanForControllerIds: permission request failed - $error');
+      rethrow;
+    }
+
+    final found = <String>{};
+    final completer = Completer<void>();
+    StreamSubscription<List<ScanResult>>? subscription;
+
+    try {
+      await FlutterBluePlus.startScan(timeout: timeout);
+
+      subscription = FlutterBluePlus.scanResults.listen((results) {
+        for (final result in results) {
+          final controllerId = result.device.id.id;
+          if (targets.contains(controllerId)) {
+            found.add(controllerId);
+            if (found.length == targets.length && !completer.isCompleted) {
+              completer.complete();
+            }
+          }
+        }
+      });
+
+      if (!completer.isCompleted) {
+        try {
+          await completer.future.timeout(timeout);
+        } on TimeoutException {
+          // Expected when not all devices are found before timeout.
+        }
+      }
+    } finally {
+      await FlutterBluePlus.stopScan();
+      await subscription?.cancel();
+    }
+
+    return found;
   }
 
   // Read channel states

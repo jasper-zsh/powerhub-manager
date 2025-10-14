@@ -1,0 +1,248 @@
+openapi: 3.0.3
+info:
+  title: Saved Controller Management API (Conceptual)
+  version: 1.0.0
+  description: >
+    Contract describing the app-facing service layer for persisting saved controllers,
+    managing aliases, and coordinating reconnection status. Implemented locally within
+    the mobile client but expressed as RESTful interfaces for clarity.
+paths:
+  /saved-controllers:
+    get:
+      summary: List saved controllers with their current status snapshots
+      operationId: listSavedControllers
+      responses:
+        '200':
+          description: Saved controllers returned successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SavedControllerCollection'
+    post:
+      summary: Save a controller and assign an alias
+      operationId: createSavedController
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SavedControllerCreate'
+      responses:
+        '201':
+          description: Controller saved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SavedController'
+        '409':
+          description: Controller identifier already saved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DuplicateControllerError'
+  /saved-controllers/{controllerId}:
+    patch:
+      summary: Update alias or notes for a saved controller
+      operationId: updateSavedController
+      parameters:
+        - $ref: '#/components/parameters/ControllerId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SavedControllerUpdate'
+      responses:
+        '200':
+          description: Controller updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SavedController'
+        '404':
+          description: Controller not found
+    delete:
+      summary: Remove a saved controller and cancel reconnection attempts
+      operationId: deleteSavedController
+      parameters:
+        - $ref: '#/components/parameters/ControllerId'
+      responses:
+        '204':
+          description: Controller removed
+        '404':
+          description: Controller not found
+  /connection-status:
+    get:
+      summary: Retrieve aggregate reconnection progress for saved controllers
+      operationId: getConnectionStatus
+      responses:
+        '200':
+          description: Status returned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConnectionDashboardSummary'
+  /connection-status/{controllerId}/actions/resume:
+    post:
+      summary: Resume reconnection attempts for a controller marked unavailable
+      operationId: resumeConnectionAttempts
+      parameters:
+        - $ref: '#/components/parameters/ControllerId'
+      responses:
+        '202':
+          description: Reconnection attempts resumed
+        '404':
+          description: Controller not found
+
+components:
+  parameters:
+    ControllerId:
+      name: controllerId
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Stable BLE identifier of the saved controller.
+
+  schemas:
+    SavedControllerCollection:
+      type: object
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/SavedController'
+    SavedController:
+      type: object
+      required:
+        - controllerId
+        - alias
+        - connectionStatus
+      properties:
+        controllerId:
+          type: string
+          description: Stable identifier (e.g., MAC address or advertised UUID).
+        alias:
+          type: string
+          minLength: 1
+          maxLength: 32
+        lastConnectedAt:
+          type: string
+          format: date-time
+          nullable: true
+        connectionStatus:
+          $ref: '#/components/schemas/ConnectionStatus'
+        retryState:
+          $ref: '#/components/schemas/RetryPolicy'
+        deviceCapabilities:
+          $ref: '#/components/schemas/DeviceCapabilities'
+        notes:
+          type: string
+          maxLength: 140
+          nullable: true
+    SavedControllerCreate:
+      type: object
+      required:
+        - controllerId
+        - alias
+      properties:
+        controllerId:
+          type: string
+        alias:
+          type: string
+          minLength: 1
+          maxLength: 32
+        deviceCapabilities:
+          $ref: '#/components/schemas/DeviceCapabilities'
+        notes:
+          type: string
+          maxLength: 140
+          nullable: true
+    SavedControllerUpdate:
+      type: object
+      properties:
+        alias:
+          type: string
+          minLength: 1
+          maxLength: 32
+        notes:
+          type: string
+          maxLength: 140
+          nullable: true
+        resetRetryCounters:
+          type: boolean
+          description: Optional flag to reset retry attempts after troubleshooting.
+    DuplicateControllerError:
+      type: object
+      required:
+        - code
+        - message
+        - existingController
+      properties:
+        code:
+          type: string
+          enum: [duplicate_controller]
+        message:
+          type: string
+        existingController:
+          $ref: '#/components/schemas/SavedController'
+    ConnectionStatus:
+      type: string
+      enum:
+        - connected
+        - connecting
+        - disconnected
+        - unavailable
+    RetryPolicy:
+      type: object
+      required:
+        - maxAttempts
+        - attemptCount
+        - backoffSeconds
+      properties:
+        maxAttempts:
+          type: integer
+          minimum: 1
+        attemptCount:
+          type: integer
+          minimum: 0
+        backoffSeconds:
+          type: number
+          format: float
+        lastAttemptAt:
+          type: string
+          format: date-time
+          nullable: true
+    DeviceCapabilities:
+      type: object
+      properties:
+        channels:
+          type: integer
+          minimum: 1
+          maximum: 4
+        firmwareVersion:
+          type: string
+        supportsPresets:
+          type: boolean
+    ConnectionDashboardSummary:
+      type: object
+      required:
+        - totalSaved
+        - connectedCount
+        - recoveringCount
+        - unavailableCount
+      properties:
+        totalSaved:
+          type: integer
+          minimum: 0
+        connectedCount:
+          type: integer
+          minimum: 0
+        recoveringCount:
+          type: integer
+          minimum: 0
+        unavailableCount:
+          type: integer
+          minimum: 0

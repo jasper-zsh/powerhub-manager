@@ -1,0 +1,42 @@
+# Flutter & Dart build artifacts
+.dart_tool/
+.packages
+.flutter-plugins
+.flutter-plugins-dependencies
+.metadata
+build/
+
+# IntelliJ/VS Code
+.idea/
+*.iml
+.vscode/
+
+# Android specific
+app/android/.gradle/
+app/android/local.properties
+app/android/app/debug/
+app/android/app/profile/
+app/android/app/release/
+
+# iOS/macOS specific
+app/ios/Pods/
+app/ios/Flutter/Flutter.podspec
+app/ios/Flutter/Generated.xcconfig
+app/ios/Flutter/ephemeral/
+app/ios/Runner/GeneratedPluginRegistrant.*
+app/macos/Pods/
+app/macos/Flutter/ephemeral/
+
+# Windows/Linux specific
+app/windows/flutter/ephemeral/
+app/linux/flutter/ephemeral/
+
+# Logs & temp files
+*.log
+*.tmp
+*.swp
+.DS_Store
+Thumbs.db
+
+# Local tooling state
+.codex/

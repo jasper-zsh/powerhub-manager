@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:app/models/preset.dart';
+import 'package:app/models/saved_controller.dart';
 import 'package:app/models/control_command/control_command.dart';
 import 'package:app/models/control_command/set_command.dart';
 import 'package:app/models/control_command/fade_command.dart';
@@ -9,8 +10,15 @@ import 'package:app/models/control_command/strobe_command.dart';
 
 class StorageService {
   static const String _presetsKey = 'presets';
+  static const String _savedControllersKey = 'saved_controllers';
   
   SharedPreferences? _prefs;
+  
+  void _requireInitialized() {
+    if (_prefs == null) {
+      throw Exception('STORAGE_NOT_INITIALIZED');
+    }
+  }
   
   // Initialize the storage service
   Future<void> init() async {
@@ -19,9 +27,7 @@ class StorageService {
   
   // Save a preset to local storage
   Future<int> savePreset(Preset preset) async {
-    if (_prefs == null) {
-      throw Exception('STORAGE_NOT_INITIALIZED');
-    }
+    _requireInitialized();
     
     try {
       // Get existing presets
@@ -76,9 +82,7 @@ class StorageService {
   
   // Load all presets from local storage
   Future<Map<String, dynamic>> loadAllPresets() async {
-    if (_prefs == null) {
-      throw Exception('STORAGE_NOT_INITIALIZED');
-    }
+    _requireInitialized();
     
     try {
       String? json = _prefs!.getString(_presetsKey);
@@ -153,9 +157,7 @@ class StorageService {
   
   // Update a preset in local storage
   Future<DateTime> updatePreset(int id, PresetUpdate update) async {
-    if (_prefs == null) {
-      throw Exception('STORAGE_NOT_INITIALIZED');
-    }
+    _requireInitialized();
     
     try {
       // Get existing presets
@@ -227,6 +229,133 @@ class StorageService {
       }
       throw Exception('STORAGE_ERROR');
     }
+  }
+
+  Future<List<SavedController>> loadSavedControllers() async {
+    _requireInitialized();
+
+    try {
+      final raw = _prefs!.getString(_savedControllersKey);
+      if (raw == null || raw.isEmpty) {
+        return [];
+      }
+
+      final List<dynamic> decoded = jsonDecode(raw) as List<dynamic>;
+      return decoded
+          .whereType<Map>()
+          .map((entry) => SavedController.fromJson(
+                (entry as Map).cast<String, dynamic>(),
+              ))
+          .toList();
+    } catch (_) {
+      // Corrupt payloads should not crash the app; return empty list instead.
+      return [];
+    }
+  }
+
+  Future<void> persistSavedControllers(
+    List<SavedController> controllers,
+  ) async {
+    _requireInitialized();
+
+    final payload = controllers.map((controller) => controller.toJson()).toList();
+    await _prefs!.setString(
+      _savedControllersKey,
+      jsonEncode(payload),
+    );
+  }
+
+  Future<SavedController?> findSavedController(String controllerId) async {
+    final controllers = await loadSavedControllers();
+    try {
+      return controllers.firstWhere(
+        (controller) => controller.controllerId == controllerId,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> clearSavedControllers() async {
+    _requireInitialized();
+    await _prefs!.remove(_savedControllersKey);
+  }
+
+  Future<SavedController> addSavedController(
+    SavedController controller,
+  ) async {
+    _requireInitialized();
+
+    final controllers = await loadSavedControllers();
+
+    SavedController.ensureAliasUnique(
+      controller.alias,
+      controllers,
+      ignoreControllerId: controller.controllerId,
+    );
+
+    final updatedControllers = List<SavedController>.from(controllers);
+    final index = updatedControllers.indexWhere(
+      (existing) => existing.controllerId == controller.controllerId,
+    );
+
+    if (index >= 0) {
+      updatedControllers[index] = controller;
+    } else {
+      updatedControllers.add(controller);
+    }
+
+    await persistSavedControllers(updatedControllers);
+    return controller;
+  }
+
+  Future<SavedController> renameSavedController(
+    String controllerId,
+    String alias,
+  ) async {
+    _requireInitialized();
+
+    final controllers = await loadSavedControllers();
+    final index = controllers.indexWhere(
+      (controller) => controller.controllerId == controllerId,
+    );
+
+    if (index < 0) {
+      throw ArgumentError('SAVED_CONTROLLER_NOT_FOUND');
+    }
+
+    SavedController.ensureAliasUnique(
+      alias,
+      controllers,
+      ignoreControllerId: controllerId,
+    );
+
+    final sanitizedAlias = SavedController.sanitizeAlias(alias);
+    final updatedController = controllers[index].copyWith(
+      alias: sanitizedAlias,
+    );
+
+    controllers[index] = updatedController;
+    await persistSavedControllers(controllers);
+    return updatedController;
+  }
+
+  Future<List<SavedController>> removeSavedController(
+    String controllerId,
+  ) async {
+    _requireInitialized();
+
+    final controllers = await loadSavedControllers();
+    final updatedControllers = controllers
+        .where((controller) => controller.controllerId != controllerId)
+        .toList();
+
+    if (updatedControllers.length == controllers.length) {
+      throw ArgumentError('SAVED_CONTROLLER_NOT_FOUND');
+    }
+
+    await persistSavedControllers(updatedControllers);
+    return updatedControllers;
   }
   
   // Delete a preset from local storage

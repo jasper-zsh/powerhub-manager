@@ -18,16 +18,53 @@ void main() {
   );
 }
 
-class MyApp extends StatelessWidget {
+class MyApp extends StatefulWidget {
   const MyApp({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    // Initialize the app state provider
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      Provider.of<AppStateProvider>(context, listen: false).init();
+  State<MyApp> createState() => _MyAppState();
+}
+
+class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      final appState = Provider.of<AppStateProvider>(context, listen: false);
+      await appState.init();
+      appState.startAutoReconnectLoop();
     });
-    
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    final appState = Provider.of<AppStateProvider>(context, listen: false);
+    appState.stopAutoReconnectLoop();
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    final appState = Provider.of<AppStateProvider>(context, listen: false);
+
+    switch (state) {
+      case AppLifecycleState.resumed:
+        appState.startAutoReconnectLoop();
+        break;
+      case AppLifecycleState.inactive:
+      case AppLifecycleState.paused:
+      case AppLifecycleState.detached:
+      case AppLifecycleState.hidden:
+        appState.stopAutoReconnectLoop();
+        break;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
     return MaterialApp(
       title: 'PowerHub Manager',
       theme: ThemeData(

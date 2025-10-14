@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:app/models/pwm_controller.dart';
-import 'package:app/models/channel.dart';
 import 'package:app/models/preset.dart';
 import 'package:app/services/ble_service.dart';
 import 'package:app/services/storage_service.dart';
@@ -11,15 +10,25 @@ import 'package:app/models/control_command/fade_command.dart';
 import 'package:app/models/control_command/blink_command.dart';
 import 'package:app/models/control_command/strobe_command.dart';
 import 'package:app/models/telemetry.dart';
+import 'package:app/models/saved_controller.dart';
+import 'package:app/models/connection_status_record.dart';
 
 class AppStateProvider with ChangeNotifier {
-  final BLEService _bleService = BLEService();
-  final StorageService _storageService = StorageService();
+  AppStateProvider({
+    BLEService? bleService,
+    StorageService? storageService,
+  })  : _bleService = bleService ?? BLEService(),
+        _storageService = storageService ?? StorageService();
+
+  final BLEService _bleService;
+  final StorageService _storageService;
 
   PWMController? _selectedDevice;
   List<PWMController> _discoveredDevices = [];
   List<Preset> _localPresets = [];
   List<Preset> _devicePresets = [];
+  List<SavedController> _savedControllers = [];
+  List<ConnectionStatusRecord> _connectionStatusRecords = [];
   bool _isScanning = false;
   String _errorMessage = '';
   bool _isLoadingDevicePresets = false;
@@ -27,12 +36,20 @@ class AppStateProvider with ChangeNotifier {
   TelemetryData? _telemetry;
   String _telemetryError = '';
   StreamSubscription<TelemetryData>? _telemetrySubscription;
+  Timer? _reconnectTimer;
+  bool _autoReconnectActive = false;
+  bool _reconnectInProgress = false;
 
   // Getters
   PWMController? get selectedDevice => _selectedDevice;
   List<PWMController> get discoveredDevices => _discoveredDevices;
   List<Preset> get localPresets => _localPresets;
   List<Preset> get devicePresets => _devicePresets;
+  List<SavedController> get savedControllers => List.unmodifiable(_savedControllers);
+  List<ConnectionStatusRecord> get connectionStatusRecords =>
+      List.unmodifiable(_connectionStatusRecords);
+  ConnectionDashboardSummary get connectionDashboardSummary =>
+      ConnectionDashboardSummary.fromControllers(_savedControllers);
   bool get isScanning => _isScanning;
   String get errorMessage => _errorMessage;
   bool get isConnected => _selectedDevice?.isConnected ?? false;
@@ -47,8 +64,340 @@ class AppStateProvider with ChangeNotifier {
   Future<void> init() async {
     debugPrint('AppStateProvider: Initializing...');
     await _storageService.init();
+    await loadSavedControllers();
     await loadLocalPresets();
     debugPrint('AppStateProvider: Initialization completed');
+  }
+
+  Future<void> loadSavedControllers() async {
+    debugPrint('AppStateProvider: Loading saved controllers from storage');
+    final controllers = await _storageService.loadSavedControllers();
+    _savedControllers = controllers;
+    _syncConnectionRecords();
+    notifyListeners();
+  }
+
+  Future<SavedController> saveController({
+    required String controllerId,
+    required String alias,
+    DeviceCapabilities? deviceCapabilities,
+    String? notes,
+  }) async {
+    try {
+      final savedController = SavedController(
+        controllerId: controllerId,
+        alias: alias,
+        deviceCapabilities: deviceCapabilities,
+        notes: notes,
+      );
+
+      final persisted = await _storageService.addSavedController(
+        savedController,
+      );
+
+      _errorMessage = '';
+      _upsertSavedController(persisted);
+      notifyListeners();
+      return persisted;
+    } on ArgumentError catch (error) {
+      _errorMessage = error.message?.toString() ??
+          'Alias already exists. Choose a different name.';
+      notifyListeners();
+      rethrow;
+    } catch (error) {
+      _errorMessage = 'Failed to save controller: $error';
+      notifyListeners();
+      rethrow;
+    }
+  }
+
+  void _upsertSavedController(SavedController controller) {
+    final existingIndex = _savedControllers.indexWhere(
+      (item) => item.controllerId == controller.controllerId,
+    );
+
+    if (existingIndex >= 0) {
+      _savedControllers[existingIndex] = controller;
+    } else {
+      _savedControllers = List.of(_savedControllers)..add(controller);
+    }
+    _syncConnectionRecords();
+  }
+
+  void _syncConnectionRecords() {
+    final existing = {
+      for (final record in _connectionStatusRecords)
+        record.controller.controllerId: record,
+    };
+
+    _connectionStatusRecords = _savedControllers
+        .map(
+          (controller) => existing[controller.controllerId]?.copyWith(
+                controller: controller,
+              ) ??
+              ConnectionStatusRecord(controller: controller),
+        )
+        .toList();
+  }
+
+  Future<SavedController> renameSavedController(
+    String controllerId,
+    String alias,
+  ) async {
+    try {
+      final updated = await _storageService.renameSavedController(
+        controllerId,
+        alias,
+      );
+
+      _savedControllers = _savedControllers
+          .map((controller) => controller.controllerId == controllerId
+              ? updated
+              : controller)
+          .toList();
+      _syncConnectionRecords();
+      _errorMessage = '';
+      notifyListeners();
+      return updated;
+    } on ArgumentError catch (error) {
+      _errorMessage = error.message?.toString() ?? 'Alias already exists.';
+      notifyListeners();
+      rethrow;
+    } catch (error) {
+      _errorMessage = 'Failed to rename controller: $error';
+      notifyListeners();
+      rethrow;
+    }
+  }
+
+  Future<void> removeSavedController(String controllerId) async {
+    try {
+      final updatedControllers = await _storageService.removeSavedController(
+        controllerId,
+      );
+
+      _savedControllers = updatedControllers;
+      _syncConnectionRecords();
+      _errorMessage = '';
+      notifyListeners();
+    } on ArgumentError catch (error) {
+      _errorMessage = error.message?.toString() ?? 'Saved controller not found';
+      notifyListeners();
+      rethrow;
+    } catch (error) {
+      _errorMessage = 'Failed to remove controller: $error';
+      notifyListeners();
+      rethrow;
+    }
+  }
+
+  Future<void> reconcileSavedControllers({DateTime? currentTime}) async {
+    if (_savedControllers.isEmpty) {
+      return;
+    }
+
+    final now = currentTime ?? DateTime.now();
+    final controllerMap = {
+      for (final controller in _savedControllers)
+        controller.controllerId: controller,
+    };
+
+    final recordMap = {
+      for (final record in _connectionStatusRecords)
+        record.controller.controllerId: record,
+    };
+
+    final attemptIds = <String>{};
+
+    for (final controller in _savedControllers) {
+      final record = recordMap[controller.controllerId] ??
+          ConnectionStatusRecord(controller: controller);
+
+      if (controller.connectionStatus ==
+          SavedControllerConnectionStatus.connected) {
+        recordMap[controller.controllerId] = record.copyWith(
+          controller: controller,
+          scanState: ScanState.idle,
+          lastResult: LastScanResult.found,
+          retryAttempts: 0,
+          nextRetryAt: null,
+          errorReason: null,
+        );
+        continue;
+      }
+
+      final shouldWait = record.scanState == ScanState.waitingRetry &&
+          record.nextRetryAt != null &&
+          record.nextRetryAt!.isAfter(now);
+
+      if (shouldWait) {
+        recordMap[controller.controllerId] = record.copyWith(
+          controller: controller,
+        );
+        continue;
+      }
+
+      final incremented = controller.incrementRetry(now);
+      controllerMap[controller.controllerId] = incremented;
+      attemptIds.add(controller.controllerId);
+      recordMap[controller.controllerId] = record.copyWith(
+        controller: incremented,
+        scanState: ScanState.scanning,
+        lastScanAt: now,
+        retryAttempts: incremented.retryPolicy.attemptCount,
+      );
+    }
+
+    Set<String> availableIds = <String>{};
+
+    if (attemptIds.isNotEmpty) {
+      try {
+        availableIds = await _bleService.scanForControllerIds(
+          attemptIds,
+        );
+        if (availableIds.isNotEmpty) {
+          _errorMessage = '';
+        }
+      } catch (error) {
+        _errorMessage = 'Failed to scan for saved controllers: $error';
+      }
+    }
+
+    for (final controllerId in attemptIds) {
+      var controller = controllerMap[controllerId]!;
+      var record = recordMap[controllerId]!;
+
+      if (availableIds.contains(controllerId)) {
+        try {
+          await _bleService.connect(controllerId);
+          controller = controller.touchConnectedAt(now);
+          record = record.copyWith(
+            controller: controller,
+            scanState: ScanState.idle,
+            lastResult: LastScanResult.found,
+            retryAttempts: 0,
+            nextRetryAt: null,
+            errorReason: null,
+          );
+        } catch (error) {
+          final exhausted = controller.retryPolicy.attemptCount >=
+              controller.retryPolicy.maxAttempts;
+          controller =
+              exhausted ? controller.markUnavailable() : controller.markDisconnected();
+          record = record.copyWith(
+            controller: controller,
+            scanState: exhausted ? ScanState.idle : ScanState.waitingRetry,
+            lastResult: LastScanResult.error,
+            errorReason: error.toString(),
+            retryAttempts: controller.retryPolicy.attemptCount,
+            nextRetryAt:
+                exhausted ? null : now.add(controller.retryPolicy.backoff),
+            lastScanAt: now,
+          );
+          _errorMessage = 'Failed to connect to ${controller.alias}: $error';
+        }
+      } else {
+        final exhausted = controller.retryPolicy.attemptCount >=
+            controller.retryPolicy.maxAttempts;
+
+        controller =
+            exhausted ? controller.markUnavailable() : controller.markDisconnected();
+
+        record = record.copyWith(
+          controller: controller,
+          scanState: exhausted ? ScanState.idle : ScanState.waitingRetry,
+          lastResult: LastScanResult.notFound,
+          retryAttempts: controller.retryPolicy.attemptCount,
+          nextRetryAt:
+              exhausted ? null : now.add(controller.retryPolicy.backoff),
+          lastScanAt: now,
+          errorReason: exhausted ? 'Device unreachable' : null,
+        );
+      }
+
+      controllerMap[controllerId] = controller;
+      recordMap[controllerId] = record;
+    }
+
+    _savedControllers = _savedControllers
+        .map((controller) => controllerMap[controller.controllerId]!)
+        .toList();
+
+    _connectionStatusRecords = _savedControllers
+        .map(
+          (controller) => recordMap[controller.controllerId] ??
+              ConnectionStatusRecord(controller: controller),
+        )
+        .toList();
+
+    await _storageService.persistSavedControllers(_savedControllers);
+    notifyListeners();
+  }
+
+  void startAutoReconnectLoop() {
+    if (_autoReconnectActive) {
+      return;
+    }
+    _autoReconnectActive = true;
+    _scheduleReconnectCycle();
+  }
+
+  void stopAutoReconnectLoop() {
+    _autoReconnectActive = false;
+    _reconnectTimer?.cancel();
+    _reconnectTimer = null;
+  }
+
+  void _scheduleReconnectCycle() {
+    if (!_autoReconnectActive || _reconnectInProgress) {
+      return;
+    }
+
+    _reconnectInProgress = true;
+
+    reconcileSavedControllers().catchError((error, stack) {
+      debugPrint('Auto reconnect cycle error: $error');
+    }).whenComplete(() async {
+      _reconnectInProgress = false;
+
+      if (!_autoReconnectActive) {
+        return;
+      }
+
+      final pendingRecords = _connectionStatusRecords.where(
+        (record) =>
+            record.controller.connectionStatus !=
+                SavedControllerConnectionStatus.connected &&
+            record.controller.connectionStatus !=
+                SavedControllerConnectionStatus.unavailable,
+      );
+
+      if (pendingRecords.isEmpty) {
+        _autoReconnectActive = false;
+        return;
+      }
+
+      final now = DateTime.now();
+      Duration nextDelay = const Duration(seconds: 5);
+
+      final waitingDelays = pendingRecords
+          .where((record) =>
+              record.scanState == ScanState.waitingRetry &&
+              record.nextRetryAt != null)
+          .map((record) => record.nextRetryAt!.difference(now))
+          .where((delay) => delay > Duration.zero)
+          .toList();
+
+      if (waitingDelays.isNotEmpty) {
+        waitingDelays.sort();
+        nextDelay = waitingDelays.first;
+      } else if (pendingRecords.any((record) => record.scanState == ScanState.scanning)) {
+        nextDelay = const Duration(seconds: 3);
+      }
+
+      _reconnectTimer?.cancel();
+      _reconnectTimer = Timer(nextDelay, _scheduleReconnectCycle);
+    });
   }
 
   // Scan for devices
@@ -634,6 +983,7 @@ class AppStateProvider with ChangeNotifier {
 
   @override
   void dispose() {
+    stopAutoReconnectLoop();
     _telemetrySubscription?.cancel();
     unawaited(_bleService.disableTelemetryNotifications());
     super.dispose();
