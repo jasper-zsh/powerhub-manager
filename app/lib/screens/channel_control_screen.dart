@@ -12,7 +12,6 @@ class ChannelControlScreen extends StatelessWidget {
       builder: (context, appState, child) {
         return Scaffold(
           appBar: AppBar(
-            title: const Text('Channel Control'),
             leading: IconButton(
               icon: const Icon(Icons.arrow_back),
               onPressed: () => Navigator.pop(context),

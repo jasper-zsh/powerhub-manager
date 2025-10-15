@@ -72,6 +72,7 @@ Presets on the device are stored as:
 Each command follows the control command format above.
 
 ## Recent Changes
+- 002-1-2-3: Added Dart (Flutter 3.x) + `flutter_blue_plus`, `provider`, `shared_preferences`
 1. Updated data model to use separate data structures for each command type
 2. Corrected API contracts to match separate command structures
 3. Updated contract tests to reflect proper command-specific testing

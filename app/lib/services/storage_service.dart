@@ -1,5 +1,7 @@
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:app/models/orchestration/toggle_scene.dart';
+import 'package:app/models/orchestration/execution_log_entry.dart';
 import 'package:app/models/preset.dart';
 import 'package:app/models/saved_controller.dart';
 import 'package:app/models/control_command/control_command.dart';
@@ -11,6 +13,9 @@ import 'package:app/models/control_command/strobe_command.dart';
 class StorageService {
   static const String _presetsKey = 'presets';
   static const String _savedControllersKey = 'saved_controllers';
+  static const String _toggleScenesKey = 'toggle_scenes';
+  static const String _executionLogsKey = 'orchestration_execution_logs';
+  static const int _maxExecutionLogs = 100;
   
   SharedPreferences? _prefs;
   
@@ -356,6 +361,114 @@ class StorageService {
 
     await persistSavedControllers(updatedControllers);
     return updatedControllers;
+  }
+
+  Future<List<ToggleScene>> loadToggleScenes() async {
+    _requireInitialized();
+
+    final raw = _prefs!.getString(_toggleScenesKey);
+    if (raw == null || raw.isEmpty) {
+      return [];
+    }
+
+    try {
+      final List<dynamic> decoded = jsonDecode(raw) as List<dynamic>;
+      return decoded
+          .whereType<Map>()
+          .map(
+            (entry) => ToggleScene.fromJson(
+              (entry as Map).cast<String, dynamic>(),
+            ),
+          )
+          .toList();
+    } catch (_) {
+      // On corrupt payload reset storage to avoid crashes.
+      await _prefs!.remove(_toggleScenesKey);
+      return [];
+    }
+  }
+
+  Future<void> persistToggleScenes(List<ToggleScene> scenes) async {
+    _requireInitialized();
+
+    final payload = scenes.map((scene) => scene.toJson()).toList();
+    await _prefs!.setString(
+      _toggleScenesKey,
+      jsonEncode(payload),
+    );
+  }
+
+  Future<ToggleScene> upsertToggleScene(ToggleScene scene) async {
+    _requireInitialized();
+
+    final scenes = await loadToggleScenes();
+    final index = scenes.indexWhere((existing) => existing.id == scene.id);
+
+    if (index >= 0) {
+      scenes[index] = scene;
+    } else {
+      scenes.add(scene);
+    }
+
+    await persistToggleScenes(scenes);
+    return scene;
+  }
+
+  Future<void> deleteToggleScene(String sceneId) async {
+    _requireInitialized();
+
+    final scenes = await loadToggleScenes();
+    final updated =
+        scenes.where((scene) => scene.id != sceneId).toList(growable: false);
+    await persistToggleScenes(updated);
+  }
+
+  Future<List<ExecutionLogEntry>> loadExecutionLogs() async {
+    _requireInitialized();
+
+    final raw = _prefs!.getString(_executionLogsKey);
+    if (raw == null || raw.isEmpty) {
+      return [];
+    }
+
+    try {
+      final List<dynamic> decoded = jsonDecode(raw) as List<dynamic>;
+      return decoded
+          .whereType<Map>()
+          .map(
+            (entry) => ExecutionLogEntry.fromJson(
+              (entry as Map).cast<String, dynamic>(),
+            ),
+          )
+          .toList();
+    } catch (_) {
+      await _prefs!.remove(_executionLogsKey);
+      return [];
+    }
+  }
+
+  Future<void> persistExecutionLogs(List<ExecutionLogEntry> logs) async {
+    _requireInitialized();
+
+    final payload = logs.map((log) => log.toJson()).toList();
+    await _prefs!.setString(
+      _executionLogsKey,
+      jsonEncode(payload),
+    );
+  }
+
+  Future<void> appendExecutionLog(ExecutionLogEntry entry) async {
+    final logs = await loadExecutionLogs();
+    logs.insert(0, entry);
+    if (logs.length > _maxExecutionLogs) {
+      logs.removeRange(_maxExecutionLogs, logs.length);
+    }
+    await persistExecutionLogs(logs);
+  }
+
+  Future<void> clearExecutionLogs() async {
+    _requireInitialized();
+    await _prefs!.remove(_executionLogsKey);
   }
   
   // Delete a preset from local storage

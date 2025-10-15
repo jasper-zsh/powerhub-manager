@@ -17,7 +17,6 @@ class HomeScreen extends StatelessWidget {
       builder: (context, appState, child) {
         return Scaffold(
           appBar: AppBar(
-            title: const Text('PowerHub Manager'),
             actions: [
               IconButton(
                 icon: const Icon(Icons.refresh),

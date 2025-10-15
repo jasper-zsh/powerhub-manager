@@ -48,7 +48,6 @@ class _PresetManagementScreenState extends State<PresetManagementScreen> {
           length: 2,
           child: Scaffold(
             appBar: AppBar(
-              title: const Text('Preset Management'),
               leading: IconButton(
                 icon: const Icon(Icons.arrow_back),
                 onPressed: () => Navigator.pop(context),

@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:app/models/pwm_controller.dart';
+import 'package:app/models/channel.dart';
 import 'package:app/models/preset.dart';
 import 'package:app/models/control_command/control_command.dart';
 import 'package:app/models/control_command/set_command.dart';
@@ -17,6 +18,10 @@ import 'package:flutter/foundation.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 class BLEService {
+  BLEService._internal();
+  static final BLEService _instance = BLEService._internal();
+  factory BLEService() => _instance;
+
   static const String SERVICE_UUID = '5e0b0001-6f72-4761-8e3e-7a1c1b5f9b11';
   static const String CHANNEL_STATES_UUID =
       '0000fff0-0000-1000-8000-00805f9b34fb';

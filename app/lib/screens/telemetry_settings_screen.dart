@@ -60,7 +60,7 @@ class _TelemetrySettingsScreenState extends State<TelemetrySettingsScreen> {
       builder: (context, appState, _) {
         if (!appState.isConnected) {
           return Scaffold(
-            appBar: AppBar(title: const Text('设备阈值设置')),
+            appBar: AppBar(),
             body: const Center(child: Text('请先连接设备后再调整阈值。')),
           );
         }
@@ -69,7 +69,6 @@ class _TelemetrySettingsScreenState extends State<TelemetrySettingsScreen> {
 
         return Scaffold(
           appBar: AppBar(
-            title: const Text('设备阈值设置'),
             actions: [
               IconButton(
                 icon: const Icon(Icons.refresh),

@@ -50,6 +50,19 @@ class AppStateProvider with ChangeNotifier {
       List.unmodifiable(_connectionStatusRecords);
   ConnectionDashboardSummary get connectionDashboardSummary =>
       ConnectionDashboardSummary.fromControllers(_savedControllers);
+  List<PWMController> get connectedControllers {
+    final controllers = <PWMController>[];
+    if (_selectedDevice != null && _selectedDevice!.isConnected) {
+      controllers.add(_selectedDevice!);
+    }
+    controllers.addAll(
+      _discoveredDevices.where(
+        (controller) =>
+            controller.isConnected && controller.id != _selectedDevice?.id,
+      ),
+    );
+    return controllers;
+  }
   bool get isScanning => _isScanning;
   String get errorMessage => _errorMessage;
   bool get isConnected => _selectedDevice?.isConnected ?? false;
@@ -57,8 +70,21 @@ class AppStateProvider with ChangeNotifier {
   String get devicePresetError => _devicePresetError;
   TelemetryData? get telemetry => _telemetry ?? _selectedDevice?.telemetry;
   String get telemetryError => _telemetryError;
-  bool get isThermalProtectionActive =>
-      telemetry?.isThermalProtectionActive ?? false;
+  PWMController? getConnectedController(String controllerId) {
+    if (_selectedDevice != null &&
+        _selectedDevice!.id == controllerId &&
+        _selectedDevice!.isConnected) {
+      return _selectedDevice;
+    }
+
+    try {
+      return _discoveredDevices.firstWhere(
+        (controller) => controller.id == controllerId && controller.isConnected,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
 
   // Initialize the provider
   Future<void> init() async {
@@ -71,9 +97,21 @@ class AppStateProvider with ChangeNotifier {
 
   Future<void> loadSavedControllers() async {
     debugPrint('AppStateProvider: Loading saved controllers from storage');
-    final controllers = await _storageService.loadSavedControllers();
-    _savedControllers = controllers;
+    final rawControllers = await _storageService.loadSavedControllers();
+    _savedControllers = rawControllers
+        .map(
+          (controller) => controller.copyWith(
+            connectionStatus: SavedControllerConnectionStatus.disconnected,
+            retryPolicy: controller.retryPolicy.copyWith(
+              attemptCount: 0,
+              lastAttemptAt: null,
+            ),
+          ),
+        )
+        .toList();
+    _connectionStatusRecords = [];
     _syncConnectionRecords();
+    await _storageService.persistSavedControllers(_savedControllers);
     notifyListeners();
   }
 
@@ -140,6 +178,87 @@ class AppStateProvider with ChangeNotifier {
         .toList();
   }
 
+  void _updateSavedControllerConnectionStatus(
+    String controllerId,
+    SavedControllerConnectionStatus status, {
+    DateTime? timestamp,
+  }) {
+    final index = _savedControllers.indexWhere(
+      (controller) => controller.controllerId == controllerId,
+    );
+    if (index == -1) {
+      debugPrint(
+        'AppStateProvider: Unable to update connection status for $controllerId '
+        '- controller not found',
+      );
+      return;
+    }
+
+    final current = _savedControllers[index];
+    SavedController updated;
+    final now = timestamp ?? DateTime.now();
+
+    switch (status) {
+      case SavedControllerConnectionStatus.connected:
+        updated = current.touchConnectedAt(now);
+        break;
+      case SavedControllerConnectionStatus.connecting:
+        updated = current.copyWith(
+          connectionStatus: SavedControllerConnectionStatus.connecting,
+          retryPolicy: current.retryPolicy.copyWith(
+            lastAttemptAt: now,
+          ),
+        );
+        break;
+      case SavedControllerConnectionStatus.disconnected:
+        updated = current.markDisconnected();
+        break;
+      case SavedControllerConnectionStatus.unavailable:
+        updated = current.markUnavailable();
+        break;
+    }
+
+    _savedControllers[index] = updated;
+    _syncConnectionRecords();
+    debugPrint(
+      'AppStateProvider: Updated $controllerId status -> ${updated.connectionStatus}',
+    );
+    unawaited(_storageService.persistSavedControllers(_savedControllers));
+    notifyListeners();
+  }
+
+  void markControllerConnected(String controllerId) {
+    debugPrint('AppStateProvider: markControllerConnected($controllerId)');
+    _updateSavedControllerConnectionStatus(
+      controllerId,
+      SavedControllerConnectionStatus.connected,
+    );
+  }
+
+  void markControllerDisconnected(String controllerId) {
+    debugPrint('AppStateProvider: markControllerDisconnected($controllerId)');
+    _updateSavedControllerConnectionStatus(
+      controllerId,
+      SavedControllerConnectionStatus.disconnected,
+    );
+  }
+
+  void markControllerUnavailable(String controllerId) {
+    debugPrint('AppStateProvider: markControllerUnavailable($controllerId)');
+    _updateSavedControllerConnectionStatus(
+      controllerId,
+      SavedControllerConnectionStatus.unavailable,
+    );
+  }
+
+  void markControllerConnecting(String controllerId) {
+    debugPrint('AppStateProvider: markControllerConnecting($controllerId)');
+    _updateSavedControllerConnectionStatus(
+      controllerId,
+      SavedControllerConnectionStatus.connecting,
+    );
+  }
+
   Future<SavedController> renameSavedController(
     String controllerId,
     String alias,
@@ -189,6 +308,24 @@ class AppStateProvider with ChangeNotifier {
       notifyListeners();
       rethrow;
     }
+  }
+
+  Future<void> reorderSavedControllers(int oldIndex, int newIndex) async {
+    if (oldIndex == newIndex) {
+      return;
+    }
+
+    if (newIndex > oldIndex) {
+      newIndex -= 1;
+    }
+
+    final controllers = List<SavedController>.from(_savedControllers);
+    final item = controllers.removeAt(oldIndex);
+    controllers.insert(newIndex, item);
+    _savedControllers = controllers;
+    _syncConnectionRecords();
+    await _storageService.persistSavedControllers(_savedControllers);
+    notifyListeners();
   }
 
   Future<void> reconcileSavedControllers({DateTime? currentTime}) async {
@@ -268,8 +405,11 @@ class AppStateProvider with ChangeNotifier {
       var record = recordMap[controllerId]!;
 
       if (availableIds.contains(controllerId)) {
-        try {
-          await _bleService.connect(controllerId);
+        final alreadyConnected = getConnectedController(controllerId);
+        if (alreadyConnected != null && alreadyConnected.isConnected) {
+          debugPrint(
+            'reconcileSavedControllers: $controllerId already connected, skipping reconnect',
+          );
           controller = controller.touchConnectedAt(now);
           record = record.copyWith(
             controller: controller,
@@ -279,40 +419,69 @@ class AppStateProvider with ChangeNotifier {
             nextRetryAt: null,
             errorReason: null,
           );
-        } catch (error) {
-          final exhausted = controller.retryPolicy.attemptCount >=
-              controller.retryPolicy.maxAttempts;
-          controller =
-              exhausted ? controller.markUnavailable() : controller.markDisconnected();
-          record = record.copyWith(
-            controller: controller,
-            scanState: exhausted ? ScanState.idle : ScanState.waitingRetry,
-            lastResult: LastScanResult.error,
-            errorReason: error.toString(),
-            retryAttempts: controller.retryPolicy.attemptCount,
-            nextRetryAt:
-                exhausted ? null : now.add(controller.retryPolicy.backoff),
-            lastScanAt: now,
-          );
-          _errorMessage = 'Failed to connect to ${controller.alias}: $error';
+        } else {
+          try {
+            await _bleService.connect(controllerId);
+            controller = controller.touchConnectedAt(now);
+            record = record.copyWith(
+              controller: controller,
+              scanState: ScanState.idle,
+              lastResult: LastScanResult.found,
+              retryAttempts: 0,
+              nextRetryAt: null,
+              errorReason: null,
+            );
+          } catch (error) {
+            final exhausted = controller.retryPolicy.attemptCount >=
+                controller.retryPolicy.maxAttempts;
+            controller =
+                exhausted ? controller.markUnavailable() : controller.markDisconnected();
+            record = record.copyWith(
+              controller: controller,
+              scanState: exhausted ? ScanState.idle : ScanState.waitingRetry,
+              lastResult: LastScanResult.error,
+              errorReason: error.toString(),
+              retryAttempts: controller.retryPolicy.attemptCount,
+              nextRetryAt:
+                  exhausted ? null : now.add(controller.retryPolicy.backoff),
+              lastScanAt: now,
+            );
+            _errorMessage = 'Failed to connect to ${controller.alias}: $error';
+          }
         }
       } else {
         final exhausted = controller.retryPolicy.attemptCount >=
             controller.retryPolicy.maxAttempts;
 
-        controller =
-            exhausted ? controller.markUnavailable() : controller.markDisconnected();
+        final alreadyConnected = getConnectedController(controllerId);
+        if (alreadyConnected != null && alreadyConnected.isConnected) {
+          debugPrint(
+            'reconcileSavedControllers: $controllerId reported missing but active connection detected',
+          );
+          controller = controller.touchConnectedAt(now);
+          record = record.copyWith(
+            controller: controller,
+            scanState: ScanState.idle,
+            lastResult: LastScanResult.found,
+            retryAttempts: 0,
+            nextRetryAt: null,
+            errorReason: null,
+          );
+        } else {
+          controller =
+              exhausted ? controller.markUnavailable() : controller.markDisconnected();
 
-        record = record.copyWith(
-          controller: controller,
-          scanState: exhausted ? ScanState.idle : ScanState.waitingRetry,
-          lastResult: LastScanResult.notFound,
-          retryAttempts: controller.retryPolicy.attemptCount,
-          nextRetryAt:
-              exhausted ? null : now.add(controller.retryPolicy.backoff),
-          lastScanAt: now,
-          errorReason: exhausted ? 'Device unreachable' : null,
-        );
+          record = record.copyWith(
+            controller: controller,
+            scanState: exhausted ? ScanState.idle : ScanState.waitingRetry,
+            lastResult: LastScanResult.notFound,
+            retryAttempts: controller.retryPolicy.attemptCount,
+            nextRetryAt:
+                exhausted ? null : now.add(controller.retryPolicy.backoff),
+            lastScanAt: now,
+            errorReason: exhausted ? 'Device unreachable' : null,
+          );
+        }
       }
 
       controllerMap[controllerId] = controller;
@@ -437,6 +606,8 @@ class AppStateProvider with ChangeNotifier {
     notifyListeners();
 
     try {
+      markControllerConnecting(deviceId);
+
       await _bleService.connect(deviceId);
 
       PWMController? device = _discoveredDevices.firstWhere(
@@ -451,6 +622,7 @@ class AppStateProvider with ChangeNotifier {
 
       device.connect();
       _selectedDevice = device;
+      markControllerConnected(deviceId);
       debugPrint(
         'AppStateProvider: Successfully connected to device: ${device.name}',
       );
@@ -470,6 +642,7 @@ class AppStateProvider with ChangeNotifier {
       debugPrint('AppStateProvider: Telemetry initialized');
     } catch (e) {
       debugPrint('AppStateProvider: Connection failed with error: $e');
+      markControllerDisconnected(deviceId);
       String error = e.toString();
       if (error.contains('DEVICE_NOT_FOUND')) {
         _errorMessage =
@@ -496,6 +669,7 @@ class AppStateProvider with ChangeNotifier {
     notifyListeners();
 
     try {
+      final controllerId = _selectedDevice?.id;
       await _bleService.disconnect();
       if (_telemetrySubscription != null) {
         await _telemetrySubscription!.cancel();
@@ -509,6 +683,9 @@ class AppStateProvider with ChangeNotifier {
       _devicePresets = [];
       _devicePresetError = '';
       _isLoadingDevicePresets = false;
+      if (controllerId != null) {
+        markControllerDisconnected(controllerId);
+      }
       debugPrint('AppStateProvider: Successfully disconnected');
     } catch (e) {
       debugPrint('AppStateProvider: Disconnect failed with error: $e');
