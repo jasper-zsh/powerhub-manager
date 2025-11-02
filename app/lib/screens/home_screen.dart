@@ -3,7 +3,6 @@ import 'package:provider/provider.dart';
 import 'package:app/providers/app_state_provider.dart';
 import 'package:app/screens/channel_control_screen.dart';
 import 'package:app/models/saved_controller.dart';
-import 'package:app/screens/preset_management_screen.dart';
 import 'package:app/screens/telemetry_settings_screen.dart';
 import 'package:app/widgets/connection_status.dart';
 import 'package:app/widgets/saved_controller_list.dart';
@@ -216,22 +215,7 @@ class HomeScreen extends StatelessWidget {
               child: const Text('Channel Control'),
             ),
           ),
-          const SizedBox(height: 20),
-          SizedBox(
-            width: 200,
-            child: ElevatedButton(
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => const PresetManagementScreen(),
-                  ),
-                );
-              },
-              child: const Text('Preset Management'),
-            ),
-          ),
-        ],
+                  ],
       ),
     );
   }

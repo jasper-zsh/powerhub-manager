@@ -9,11 +9,11 @@ class Channel {
     this.value = 0,
     this.name = '',
     this.isEnabled = true,
-  })  : assert(id >= 0 && id <= 3, 'Channel ID must be between 0 and 3'),
+  })  : assert(id >= 0 && id <= 5, 'Channel ID must be between 0 and 5'),
         assert(value >= 0 && value <= 255, 'Channel value must be between 0 and 255');
 
   // Validation methods
-  bool get isValidId => id >= 0 && id <= 3;
+  bool get isValidId => id >= 0 && id <= 5;
   bool get isValidValue => value >= 0 && value <= 255;
   bool get isValidName => name.isNotEmpty;
 

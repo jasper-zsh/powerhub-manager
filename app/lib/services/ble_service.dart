@@ -2,14 +2,14 @@ import 'dart:async';
 
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:app/models/pwm_controller.dart';
-import 'package:app/models/channel.dart';
-import 'package:app/models/preset.dart';
-import 'package:app/models/control_command/control_command.dart';
 import 'package:app/models/control_command/set_command.dart';
 import 'package:app/models/control_command/fade_command.dart';
 import 'package:app/models/control_command/blink_command.dart';
 import 'package:app/models/control_command/strobe_command.dart';
 import 'package:app/models/telemetry.dart';
+import 'package:app/models/power_management.dart';
+import 'package:app/models/monitoring_data.dart';
+import 'package:app/services/ble_debug_helper.dart';
 
 // For debugging
 import 'package:flutter/foundation.dart';
@@ -22,22 +22,37 @@ class BLEService {
   static final BLEService _instance = BLEService._internal();
   factory BLEService() => _instance;
 
-  static const String SERVICE_UUID = '5e0b0001-6f72-4761-8e3e-7a1c1b5f9b11';
-  static const String CHANNEL_STATES_UUID =
+  // PowerHub service UUIDs - handle both byte orders
+  static const String serviceUuid = '119B5F1B-1C7A-3E8E-6147-672F-0100-0B5E';
+  static const String serviceUuidReversed = '5e0b0001-6f72-4761-8e3e-7a1c1b5f9b11'; // Byte-swapped version
+
+  static const String channelStatesUuid =
       '0000fff0-0000-1000-8000-00805f9b34fb';
-  static const String CONTROL_COMMANDS_UUID =
+  static const String controlCommandsUuid =
       '0000fff1-0000-1000-8000-00805f9b34fb';
-  static const String READ_PRESETS_UUID =
-      '0000fff2-0000-1000-8000-00805f9b34fb';
-  static const String WRITE_PRESET_UUID =
-      '0000fff3-0000-1000-8000-00805f9b34fb';
-  static const String EXECUTE_PRESET_UUID =
-      '0000fff4-0000-1000-8000-00805f9b34fb';
-  static const String TELEMETRY_UUID = '0000fff5-0000-1000-8000-00805f9b34fb';
+  static const String powerManagementUuid =
+      '0000fff5-0000-1000-8000-00805f9b34fb';
+  static const String monitoringUuid =
+      '0000fff6-0000-1000-8000-00805f9b34fb';
+  static const String telemetryUuid = '0000fff5-0000-1000-8000-00805f9b34fb';
+
+  // Legacy constants for backward compatibility
+  static const String SERVICE_UUID = serviceUuid;
+  static const String CHANNEL_STATES_UUID = channelStatesUuid;
+  static const String CONTROL_COMMANDS_UUID = controlCommandsUuid;
+  static const String POWER_MANAGEMENT_UUID = powerManagementUuid;
+  static const String MONITORING_UUID = monitoringUuid;
+  static const String TELEMETRY_UUID = telemetryUuid;
 
   BluetoothDevice? _connectedDevice;
   BluetoothService? _service;
   TelemetryData? _lastTelemetry;
+
+  // 连接健康检查
+  Timer? _connectionHealthTimer;
+  DateTime? _lastSuccessfulOperation;
+  bool _connectionHealthy = true;
+  StreamSubscription<BluetoothConnectionState>? _deviceStateSubscription;
 
   /// Normalises UUID strings so that short (16-bit/32-bit) and full (128-bit)
   /// values can be compared reliably. The ESP32 advertises 16-bit UUIDs (e.g.
@@ -86,7 +101,7 @@ class BLEService {
 
   // Check if BLE is supported on the device
   Future<bool> isSupported() async {
-    return FlutterBluePlus.isAvailable;
+    return await FlutterBluePlus.isSupported;
   }
 
   // Scan for devices
@@ -119,17 +134,24 @@ class BLEService {
       debugPrint('Received ${results.length} scan results');
 
       for (ScanResult r in results) {
-        debugPrint('Device: ${r.device.name} (${r.device.id.id})');
+        debugPrint('Device: ${r.device.platformName} (${r.device.remoteId.str})');
         debugPrint('  RSSI: ${r.rssi}');
         debugPrint(
           '  Service UUIDs: ${r.advertisementData.serviceUuids.map((u) => u.toString()).join(', ')}',
         );
 
+        // Debug logging for device discovery
+        BLEDebugHelper.logDeviceScan(
+          r.advertisementData.serviceUuids.map((u) => u.toString()).toList(),
+          r.device.platformName,
+        );
+
         // Check if the device advertises our service UUID (normalize both sides)
         bool hasService = r.advertisementData.serviceUuids.any((uuid) {
           final adv = _normalizeUuid(uuid.toString());
-          final target = _normalizeUuid(SERVICE_UUID);
-          final matches = adv == target;
+          final target = _normalizeUuid(serviceUuid);
+          final targetReversed = _normalizeUuid(serviceUuidReversed);
+          final matches = adv == target || adv == targetReversed;
           if (matches) {
             debugPrint('  MATCH: Found our service UUID!');
           }
@@ -137,19 +159,19 @@ class BLEService {
         });
 
         // Also check device name equals expected
-        bool isESP32Device = r.device.name == 'PowerHub';
+        bool isESP32Device = r.device.platformName == 'PowerHub';
         if (isESP32Device) {
           debugPrint('  MATCH: Device name is PowerHub');
         }
 
         // De-duplicate by device id
-        bool alreadyAdded = devices.any((d) => d.id == r.device.id.id);
+        bool alreadyAdded = devices.any((d) => d.id == r.device.remoteId.str);
         if ((hasService || isESP32Device) && !alreadyAdded) {
-          debugPrint('  Adding device to list: ${r.device.name}');
+          debugPrint('  Adding device to list: ${r.device.platformName}');
           devices.add(
             PWMController(
-              id: r.device.id.id,
-              name: r.device.name.isNotEmpty ? r.device.name : 'PowerHub',
+              id: r.device.remoteId.str,
+              name: r.device.platformName.isNotEmpty ? r.device.platformName : 'PowerHub',
               rssi: r.rssi,
             ),
           );
@@ -161,7 +183,7 @@ class BLEService {
       }
 
       // Stop scanning after timeout or when we find devices
-      if (devices.length > 0) {
+      if (devices.isNotEmpty) {
         debugPrint('Found ${devices.length} devices, stopping scan early');
         break;
       }
@@ -242,7 +264,7 @@ class BLEService {
       // If already connected to a different device, disconnect first
       if (_connectedDevice != null &&
           _connectedDevice!.isConnected &&
-          _connectedDevice!.id.id != deviceId) {
+          _connectedDevice!.remoteId.str != deviceId) {
         debugPrint(
           'Disconnecting from current device before connecting to new one',
         );
@@ -250,7 +272,7 @@ class BLEService {
       }
 
       // If already connected to the same device, just return
-      if (_connectedDevice != null && _connectedDevice!.id.id == deviceId) {
+      if (_connectedDevice != null && _connectedDevice!.remoteId.str == deviceId) {
         if (_connectedDevice!.isConnected) {
           debugPrint('Already connected to device: $deviceId');
           // Still rediscover services to ensure we have the correct references
@@ -271,12 +293,18 @@ class BLEService {
       debugPrint('Attempting to connect to device...');
       await _connectedDevice!.connect(timeout: Duration(seconds: 10));
       debugPrint(
-        'Successfully connected to device: ${_connectedDevice!.id.id}',
+        'Successfully connected to device: ${_connectedDevice!.remoteId.str}',
       );
+
+      // Debug logging for successful connection
+      BLEDebugHelper.logConnectionResult(true, '');
 
       // Discover services
       await _discoverServices();
       _lastTelemetry = null;
+
+      // 建立连接健康检查
+      _startConnectionHealthCheck();
 
       debugPrint('Successfully connected and found our service');
     } catch (e) {
@@ -286,15 +314,18 @@ class BLEService {
       _connectedDevice = null;
       _service = null;
 
+      // Debug logging for failed connection
+      BLEDebugHelper.logConnectionResult(false, e.toString());
+
       if (e is FlutterBluePlusException) {
         debugPrint(
-          'FlutterBluePlusException details - error code: ${e.errorCode}, description: ${e.description}',
+          'FlutterBluePlusException details - error code: ${e.code}, description: ${e.description}',
         );
-        if (e.errorCode == 2) {
+        if (e.code == 2) {
           throw Exception('DEVICE_NOT_FOUND');
-        } else if (e.errorCode == 3) {
+        } else if (e.code == 3) {
           throw Exception('CONNECTION_FAILED');
-        } else if (e.errorCode == 4) {
+        } else if (e.code == 4) {
           throw Exception('TIMEOUT');
         }
       }
@@ -327,17 +358,32 @@ class BLEService {
 
     _service = null; // Reset service reference
 
+    // Debug logging for service discovery
+    final discoveredServiceUuids = services.map((s) => s.uuid.toString()).toList();
+    BLEDebugHelper.logServiceDiscovery(discoveredServiceUuids);
+
     for (BluetoothService service in services) {
       debugPrint('  Service: ${service.uuid}');
-      if (_normalizeUuid(service.uuid.toString()) ==
-          _normalizeUuid(SERVICE_UUID)) {
+      final normalizedService = _normalizeUuid(service.uuid.toString());
+
+      // Check if this service matches our service UUID (handle byte order differences)
+      final target = _normalizeUuid(serviceUuid);
+      final targetReversed = _normalizeUuid(serviceUuidReversed);
+      if (normalizedService == target) {
         debugPrint('  Found our service!');
         _service = service;
+        break;
+      } else if (normalizedService == targetReversed) {
+        debugPrint('  Found our service! (reversed byte order)');
+        _service = service;
+        break;
       }
     }
 
     if (_service == null) {
-      debugPrint('ERROR: Could not find our service ($SERVICE_UUID)');
+      debugPrint('ERROR: Could not find our service');
+      debugPrint('  Looking for service: $serviceUuid');
+      debugPrint('  Or reversed: $serviceUuidReversed');
       throw Exception('Service not found');
     }
   }
@@ -348,7 +394,7 @@ class BLEService {
 
     try {
       if (_connectedDevice != null && _connectedDevice!.isConnected) {
-        debugPrint('Disconnecting device: ${_connectedDevice!.id.id}');
+        debugPrint('Disconnecting device: ${_connectedDevice!.remoteId.str}');
         await _connectedDevice!.disconnect();
         debugPrint('Successfully disconnected from device');
       } else {
@@ -358,6 +404,7 @@ class BLEService {
       debugPrint('Error during disconnect: $e');
     } finally {
       // Always clean up the references
+      _stopConnectionHealthCheck();
       _connectedDevice = null;
       _service = null;
       _lastTelemetry = null;
@@ -394,7 +441,7 @@ class BLEService {
 
       subscription = FlutterBluePlus.scanResults.listen((results) {
         for (final result in results) {
-          final controllerId = result.device.id.id;
+          final controllerId = result.device.remoteId.str;
           if (targets.contains(controllerId)) {
             found.add(controllerId);
             if (found.length == targets.length && !completer.isCompleted) {
@@ -436,7 +483,7 @@ class BLEService {
     try {
       // Find the channel states characteristic
       debugPrint(
-        'Looking for channel states characteristic with UUID: $CHANNEL_STATES_UUID',
+        'Looking for channel states characteristic with UUID: $channelStatesUuid',
       );
       for (BluetoothCharacteristic c in _service!.characteristics) {
         debugPrint(
@@ -444,7 +491,7 @@ class BLEService {
         );
       }
 
-      final characteristic = _findCharacteristic(CHANNEL_STATES_UUID);
+      final characteristic = _findCharacteristic(channelStatesUuid);
 
       if (characteristic == null) {
         // List all characteristics for debugging
@@ -462,10 +509,10 @@ class BLEService {
       List<int> value = await characteristic.read();
       debugPrint('Read value: $value');
 
-      // Validate that we received 4 bytes
-      if (value.length != 4) {
+      // Validate that we received 6 bytes
+      if (value.length != 6) {
         debugPrint(
-          'ERROR: Invalid data length. Expected 4 bytes, got ${value.length} bytes: $value',
+          'ERROR: Invalid data length. Expected 6 bytes, got ${value.length} bytes: $value',
         );
         throw Exception('INVALID_DATA');
       }
@@ -479,6 +526,7 @@ class BLEService {
       }
 
       debugPrint('Successfully read channel states: $value');
+      _recordSuccessfulOperation();
       return value;
     } catch (e) {
       debugPrint('Failed to read channel states with error: $e');
@@ -512,12 +560,27 @@ class BLEService {
     try {
       final value = await characteristic.read();
 
-      if (value.length != 16) {
-        throw Exception('INVALID_DATA');
+      debugPrint('Telemetry read raw data length: ${value.length}, bytes: $value');
+
+      // Only support new 8-byte power management format
+      if (value.length != 8) {
+        throw Exception('INVALID_DATA: Expected 8 bytes, got ${value.length}');
       }
 
-      final telemetry = TelemetryData.fromRead(value);
+      // Parse new power management format
+      final powerConfig = PowerManagementConfig.fromBytes(value);
+      final telemetry = TelemetryData(
+        vinMillivolts: 0, // Not available in new format
+        temperatureCentiDegrees: powerConfig.highTempThreshold,
+        highThresholdCentiDegrees: powerConfig.highTempThreshold,
+        recoverThresholdCentiDegrees: powerConfig.recoveryThreshold,
+        sleepThresholdMilliVolts: powerConfig.sleepVoltageThreshold,
+        wakeThresholdMilliVolts: powerConfig.wakeVoltageThreshold,
+        statusFlags: 0x02, // Temperature data valid
+      );
+
       _lastTelemetry = telemetry;
+      _recordSuccessfulOperation();
       return telemetry;
     } catch (e) {
       debugPrint('Failed to read telemetry with error: $e');
@@ -548,18 +611,27 @@ class BLEService {
         .where((value) => value.isNotEmpty)
         .map((value) {
           try {
-            TelemetryData telemetry;
-            if (value.length == 16) {
-              telemetry = TelemetryData.fromRead(value);
-            } else if (value.length == 12) {
-              telemetry = TelemetryData.fromNotification(
-                value,
-                previous: _lastTelemetry,
-              );
-            } else {
-              throw Exception('INVALID_DATA');
+            debugPrint('Telemetry notification raw data length: ${value.length}, bytes: $value');
+
+            // Only support new 8-byte power management format
+            if (value.length != 8) {
+              throw Exception('INVALID_DATA: Expected 8 bytes, got ${value.length}');
             }
+
+            // Parse new power management format
+            final powerConfig = PowerManagementConfig.fromBytes(value);
+            final telemetry = TelemetryData(
+              vinMillivolts: 0, // Not available in new format
+              temperatureCentiDegrees: powerConfig.highTempThreshold,
+              highThresholdCentiDegrees: powerConfig.highTempThreshold,
+              recoverThresholdCentiDegrees: powerConfig.recoveryThreshold,
+              sleepThresholdMilliVolts: powerConfig.sleepVoltageThreshold,
+              wakeThresholdMilliVolts: powerConfig.wakeVoltageThreshold,
+              statusFlags: 0x02, // Temperature data valid
+            );
+
             _lastTelemetry = telemetry;
+            _recordSuccessfulOperation();
             return telemetry;
           } catch (e) {
             debugPrint('Failed to parse telemetry notification: $e');
@@ -632,7 +704,7 @@ class BLEService {
       throw Exception('INVALID_VALUE');
     }
 
-    final characteristic = _findCharacteristic(CONTROL_COMMANDS_UUID);
+    final characteristic = _findCharacteristic(controlCommandsUuid);
 
     if (characteristic == null) {
       throw Exception('CHARACTERISTIC_NOT_FOUND');
@@ -640,6 +712,7 @@ class BLEService {
 
     try {
       await characteristic.write(command.toBytes(), withoutResponse: true);
+      _recordSuccessfulOperation();
     } catch (e) {
       throw Exception('WRITE_FAILED');
     }
@@ -664,7 +737,7 @@ class BLEService {
       throw Exception('INVALID_DURATION');
     }
 
-    final characteristic = _findCharacteristic(CONTROL_COMMANDS_UUID);
+    final characteristic = _findCharacteristic(controlCommandsUuid);
 
     if (characteristic == null) {
       throw Exception('CHARACTERISTIC_NOT_FOUND');
@@ -672,6 +745,7 @@ class BLEService {
 
     try {
       await characteristic.write(command.toBytes(), withoutResponse: true);
+      _recordSuccessfulOperation();
     } catch (e) {
       throw Exception('WRITE_FAILED');
     }
@@ -692,7 +766,7 @@ class BLEService {
       throw Exception('INVALID_PERIOD');
     }
 
-    final characteristic = _findCharacteristic(CONTROL_COMMANDS_UUID);
+    final characteristic = _findCharacteristic(controlCommandsUuid);
 
     if (characteristic == null) {
       throw Exception('CHARACTERISTIC_NOT_FOUND');
@@ -700,6 +774,7 @@ class BLEService {
 
     try {
       await characteristic.write(command.toBytes(), withoutResponse: true);
+      _recordSuccessfulOperation();
     } catch (e) {
       throw Exception('WRITE_FAILED');
     }
@@ -728,7 +803,7 @@ class BLEService {
       throw Exception('INVALID_PAUSE_DURATION');
     }
 
-    final characteristic = _findCharacteristic(CONTROL_COMMANDS_UUID);
+    final characteristic = _findCharacteristic(controlCommandsUuid);
 
     if (characteristic == null) {
       throw Exception('CHARACTERISTIC_NOT_FOUND');
@@ -736,182 +811,182 @@ class BLEService {
 
     try {
       await characteristic.write(command.toBytes(), withoutResponse: true);
+      _recordSuccessfulOperation();
     } catch (e) {
       throw Exception('WRITE_FAILED');
     }
   }
 
-  // Read all presets from device
-  Future<List<Preset>> readAllPresets() async {
-    if (_connectedDevice == null || !_connectedDevice!.isConnected) {
-      throw Exception('NOT_CONNECTED');
+  
+  // 启动连接健康检查
+  void _startConnectionHealthCheck() {
+    if (_connectedDevice == null) return;
+
+    debugPrint('Starting connection health check for ${_connectedDevice!.remoteId.str}');
+
+    // 订阅设备状态变化
+    _deviceStateSubscription = _connectedDevice!.connectionState.listen((state) {
+      debugPrint('Device state changed: $state');
+      _updateConnectionHealth(state == BluetoothConnectionState.connected);
+    });
+
+    // 初始化健康状态
+    _lastSuccessfulOperation = DateTime.now();
+    _connectionHealthy = true;
+
+    // 启动定期健康检查
+    _connectionHealthTimer?.cancel();
+    _connectionHealthTimer = Timer.periodic(const Duration(seconds: 10), (_) {
+      _performHealthCheck();
+    });
+
+    // 延迟执行第一次健康检查，给设备初始化时间
+    Timer(const Duration(seconds: 3), () {
+      _performHealthCheck();
+    });
+  }
+
+  // 停止连接健康检查
+  void _stopConnectionHealthCheck() {
+    debugPrint('Stopping connection health check');
+    _connectionHealthTimer?.cancel();
+    _connectionHealthTimer = null;
+    _deviceStateSubscription?.cancel();
+    _deviceStateSubscription = null;
+    _connectionHealthy = false;
+  }
+
+  // 更新连接健康状态
+  void _updateConnectionHealth(bool healthy) {
+    final previousHealthy = _connectionHealthy;
+    _connectionHealthy = healthy;
+
+    if (healthy && !previousHealthy) {
+      _lastSuccessfulOperation = DateTime.now();
+      debugPrint('Connection health restored');
+    } else if (!healthy && previousHealthy) {
+      debugPrint('Connection health degraded');
     }
+  }
 
-    final characteristic = _findCharacteristic(READ_PRESETS_UUID);
-
-    if (characteristic == null) {
-      throw Exception('CHARACTERISTIC_NOT_FOUND');
+  // 执行健康检查
+  Future<void> _performHealthCheck() async {
+    if (_connectedDevice == null) {
+      _updateConnectionHealth(false);
+      return;
     }
 
     try {
-      final data = await characteristic.read();
-      final presets = <Preset>[];
-      int index = 0;
-
-      while (index < data.length) {
-        if (index + 2 > data.length) {
-          throw Exception('INVALID_DATA');
-        }
-
-        final presetId = data[index++];
-        final commandCount = data[index++];
-
-        if (presetId == 0) {
-          throw Exception('INVALID_PRESET_ID');
-        }
-
-        if (commandCount == 0) {
-          presets.removeWhere((preset) => preset.id == presetId);
-          continue;
-        }
-
-        final commands = <ControlCommand>[];
-
-        for (int i = 0; i < commandCount; i++) {
-          if (index >= data.length) {
-            throw Exception('INVALID_DATA');
-          }
-
-          final opcode = data[index];
-          switch (opcode) {
-            case 0x00:
-              _ensureBytesAvailable(data.length, index, 3);
-              final channel = data[index + 1];
-              final value = data[index + 2];
-              _validateChannel(channel);
-              commands.add(SetCommand(channel: channel, value: value));
-              index += 3;
-              break;
-            case 0x01:
-              _ensureBytesAvailable(data.length, index, 5);
-              final channel = data[index + 1];
-              _validateChannel(channel);
-              final targetValue = data[index + 2];
-              final duration = _uint16(data[index + 3], data[index + 4]);
-              commands.add(
-                FadeCommand(
-                  channel: channel,
-                  targetValue: targetValue,
-                  duration: duration,
-                ),
-              );
-              index += 5;
-              break;
-            case 0x02:
-              _ensureBytesAvailable(data.length, index, 4);
-              final channel = data[index + 1];
-              _validateChannel(channel);
-              final period = _uint16(data[index + 2], data[index + 3]);
-              commands.add(BlinkCommand(channel: channel, period: period));
-              index += 4;
-              break;
-            case 0x03:
-              _ensureBytesAvailable(data.length, index, 7);
-              final channel = data[index + 1];
-              _validateChannel(channel);
-              final flashCount = data[index + 2];
-              final totalDuration = _uint16(data[index + 3], data[index + 4]);
-              final pauseDuration = _uint16(data[index + 5], data[index + 6]);
-              commands.add(
-                StrobeCommand(
-                  channel: channel,
-                  flashCount: flashCount,
-                  totalDuration: totalDuration,
-                  pauseDuration: pauseDuration,
-                ),
-              );
-              index += 7;
-              break;
-            default:
-              throw Exception('INVALID_DATA');
-          }
-        }
-
-        presets.add(
-          Preset(id: presetId, name: 'Preset $presetId', commands: commands),
-        );
+      // 检查设备连接状态
+      final deviceConnected = _connectedDevice!.isConnected;
+      if (!deviceConnected) {
+        debugPrint('Health check: Device reports not connected');
+        _updateConnectionHealth(false);
+        return;
       }
 
-      return presets;
-    } catch (e) {
-      if (e is Exception) rethrow;
-      throw Exception('READ_FAILED');
-    }
-  }
-
-  // Save a preset to device
-  Future<void> savePresetToDevice(Preset preset) async {
-    if (_connectedDevice == null || !_connectedDevice!.isConnected) {
-      throw Exception('NOT_CONNECTED');
-    }
-
-    // Validate preset parameters
-    if (!preset.isValidId) {
-      throw Exception('INVALID_PRESET_ID');
-    }
-
-    if (!preset.isValidCommandCount) {
-      throw Exception('INVALID_COMMAND_COUNT');
-    }
-
-    final characteristic = _findCharacteristic(WRITE_PRESET_UUID);
-
-    if (characteristic == null) {
-      throw Exception('CHARACTERISTIC_NOT_FOUND');
-    }
-
-    try {
-      // Serialize the preset according to the ESP32 specification
-      List<int> data = [];
-      data.add(preset.id);
-      data.add(preset.commandCount);
-
-      for (ControlCommand command in preset.commands) {
-        data.addAll(command.toBytes());
+      // 检查服务是否可用
+      if (_service == null) {
+        debugPrint('Health check: Service not available');
+        _updateConnectionHealth(false);
+        return;
       }
 
-      await characteristic.write(data, withoutResponse: true);
+      // 尝试读取通道状态作为健康检查
+      final channelStatesCharacteristic = _findCharacteristic(channelStatesUuid);
+      if (channelStatesCharacteristic == null) {
+        debugPrint('Health check: Channel states characteristic not available');
+        _updateConnectionHealth(false);
+        return;
+      }
+
+      // 尝试快速读取（带超时）
+      final readResult = await channelStatesCharacteristic.read().timeout(
+        const Duration(seconds: 3),
+        onTimeout: () {
+          throw TimeoutException('Health check read timeout', const Duration(seconds: 3));
+        },
+      );
+
+      // 验证数据长度（容错处理，接受4-6字节范围）
+      if (readResult.length < 4 || readResult.length > 6) {
+        debugPrint('Health check: Invalid data length ${readResult.length}, expected 4-6');
+        _updateConnectionHealth(false);
+        return;
+      }
+
+      // 健康检查成功
+      _updateConnectionHealth(true);
+      _lastSuccessfulOperation = DateTime.now();
+      debugPrint('Health check: OK (${readResult.length} bytes)');
+
     } catch (e) {
-      throw Exception('WRITE_FAILED');
+      debugPrint('Health check failed: $e');
+
+      // 检查是否是超时或连接问题
+      if (e is TimeoutException ||
+          e.toString().contains('NOT_CONNECTED') ||
+          e.toString().contains('SERVICE_NOT_AVAILABLE') ||
+          e.toString().contains('CHARACTERISTIC_NOT_FOUND') ||
+          e.toString().contains('READ_FAILED')) {
+        _updateConnectionHealth(false);
+      } else {
+        // 其他错误，可能只是临时问题
+        final timeSinceLastSuccess = _lastSuccessfulOperation != null
+            ? DateTime.now().difference(_lastSuccessfulOperation!)
+            : Duration.zero;
+
+        // 如果超过30秒没有成功操作，标记为不健康
+        if (timeSinceLastSuccess.inSeconds > 30) {
+          _updateConnectionHealth(false);
+        }
+      }
     }
   }
 
-  // Execute a preset
-  Future<void> executePreset(int presetId) async {
+  // 记录成功操作
+  void _recordSuccessfulOperation() {
+    _lastSuccessfulOperation = DateTime.now();
+    if (!_connectionHealthy) {
+      _updateConnectionHealth(true);
+    }
+  }
+
+  // 获取真实的连接状态
+  bool get isConnected {
+    // 首先检查基础连接状态
     if (_connectedDevice == null || !_connectedDevice!.isConnected) {
-      throw Exception('NOT_CONNECTED');
+      return false;
     }
 
-    // Validate preset ID
-    if (presetId < 0 || presetId > 255) {
-      throw Exception('INVALID_PRESET_ID');
+    // 检查健康状态
+    if (!_connectionHealthy) {
+      return false;
     }
 
-    final characteristic = _findCharacteristic(EXECUTE_PRESET_UUID);
-
-    if (characteristic == null) {
-      throw Exception('CHARACTERISTIC_NOT_FOUND');
+    // 检查最近是否有成功操作
+    if (_lastSuccessfulOperation != null) {
+      final timeSinceLastSuccess = DateTime.now().difference(_lastSuccessfulOperation!);
+      if (timeSinceLastSuccess.inSeconds > 60) {
+        debugPrint('Connection considered stale: last success ${timeSinceLastSuccess.inSeconds}s ago');
+        return false;
+      }
     }
 
-    try {
-      await characteristic.write([presetId], withoutResponse: true);
-    } catch (e) {
-      throw Exception('WRITE_FAILED');
-    }
+    return true;
   }
 
-  // Expose connection status
-  bool get isConnected => _connectedDevice?.isConnected ?? false;
+  // 获取连接健康信息
+  Map<String, dynamic> getConnectionHealthInfo() {
+    return {
+      'healthy': _connectionHealthy,
+      'lastSuccessfulOperation': _lastSuccessfulOperation,
+      'deviceConnected': _connectedDevice?.isConnected ?? false,
+      'timeSinceLastSuccess': _lastSuccessfulOperation != null
+          ? DateTime.now().difference(_lastSuccessfulOperation!).inSeconds
+          : null,
+    };
+  }
 
   void _ensureBytesAvailable(
     int totalLength,
@@ -924,10 +999,164 @@ class BLEService {
   }
 
   void _validateChannel(int channel) {
-    if (channel < 0 || channel > 3) {
+    if (channel < 0 || channel > 5) {
       throw Exception('INVALID_CHANNEL');
     }
   }
 
   int _uint16(int msb, int lsb) => ((msb & 0xFF) << 8) | (lsb & 0xFF);
+  int _int16(int msb, int lsb) {
+    final unsigned = ((msb & 0xFF) << 8) | (lsb & 0xFF);
+    // Convert to signed 16-bit integer
+    if (unsigned >= 0x8000) {
+      return unsigned - 0x10000;
+    }
+    return unsigned;
+  }
+
+  // Power Management Methods
+
+  Future<PowerManagementConfig> readPowerManagementConfig() async {
+    if (_connectedDevice == null || !_connectedDevice!.isConnected) {
+      throw Exception('NOT_CONNECTED');
+    }
+
+    final characteristic = _findCharacteristic(powerManagementUuid);
+    if (characteristic == null) {
+      throw Exception('CHARACTERISTIC_NOT_FOUND');
+    }
+
+    try {
+      final value = await characteristic.read();
+      if (value.length != 8) {
+        throw Exception('INVALID_DATA');
+      }
+      return PowerManagementConfig.fromBytes(value);
+    } catch (e) {
+      debugPrint('Failed to read power management config: $e');
+      if (e is ArgumentError) rethrow;
+      throw Exception('READ_FAILED');
+    }
+  }
+
+  Future<void> sendPowerCommand(PowerCommand command) async {
+    if (_connectedDevice == null || !_connectedDevice!.isConnected) {
+      throw Exception('NOT_CONNECTED');
+    }
+
+    final characteristic = _findCharacteristic(powerManagementUuid);
+    if (characteristic == null) {
+      throw Exception('CHARACTERISTIC_NOT_FOUND');
+    }
+
+    try {
+      await characteristic.write(command.toBytes(), withoutResponse: true);
+    } catch (e) {
+      debugPrint('Failed to send power command: $e');
+      throw Exception('WRITE_FAILED');
+    }
+  }
+
+  // Monitoring Methods
+
+  Future<MonitoringData> readMonitoringData() async {
+    if (_connectedDevice == null || !_connectedDevice!.isConnected) {
+      throw Exception('NOT_CONNECTED');
+    }
+
+    final characteristic = _findCharacteristic(monitoringUuid);
+    if (characteristic == null) {
+      throw Exception('CHARACTERISTIC_NOT_FOUND');
+    }
+
+    try {
+      final value = await characteristic.read();
+      if (value.length != 36) {
+        throw Exception('INVALID_DATA');
+      }
+      return MonitoringData.fromBytes(value);
+    } catch (e) {
+      debugPrint('Failed to read monitoring data: $e');
+      if (e is ArgumentError) rethrow;
+      throw Exception('READ_FAILED');
+    }
+  }
+
+  Future<Stream<MonitoringData>> enableMonitoringNotifications() async {
+    if (_connectedDevice == null || !_connectedDevice!.isConnected) {
+      throw Exception('NOT_CONNECTED');
+    }
+
+    final characteristic = _findCharacteristic(monitoringUuid);
+    if (characteristic == null) {
+      throw Exception('CHARACTERISTIC_NOT_FOUND');
+    }
+
+    if (!(characteristic.properties.notify || characteristic.properties.indicate)) {
+      throw Exception('NOTIFY_NOT_SUPPORTED');
+    }
+
+    try {
+      await characteristic.setNotifyValue(true);
+      return characteristic.lastValueStream
+          .where((value) => value.length == 36)
+          .map((value) => MonitoringData.fromBytes(value));
+    } catch (e) {
+      debugPrint('Failed to enable monitoring notifications: $e');
+      throw Exception('NOTIFICATION_SETUP_FAILED');
+    }
+  }
+
+  Future<void> disableMonitoringNotifications() async {
+    final characteristic = _findCharacteristic(monitoringUuid);
+    if (characteristic == null) {
+      return;
+    }
+
+    try {
+      await characteristic.setNotifyValue(false);
+    } catch (e) {
+      debugPrint('Failed to disable monitoring notifications: $e');
+    }
+  }
+
+  // Channel state notifications
+
+  Future<Stream<List<int>>> enableChannelStateNotifications() async {
+    if (_connectedDevice == null || !_connectedDevice!.isConnected) {
+      throw Exception('NOT_CONNECTED');
+    }
+
+    final characteristic = _findCharacteristic(channelStatesUuid);
+    if (characteristic == null) {
+      throw Exception('CHARACTERISTIC_NOT_FOUND');
+    }
+
+    if (!(characteristic.properties.notify || characteristic.properties.indicate)) {
+      throw Exception('NOTIFY_NOT_SUPPORTED');
+    }
+
+    try {
+      await characteristic.setNotifyValue(true);
+      return characteristic.lastValueStream
+          .where((value) => value.length == 6)
+          .map((value) => value);
+    } catch (e) {
+      debugPrint('Failed to enable channel state notifications: $e');
+      throw Exception('NOTIFICATION_SETUP_FAILED');
+    }
+  }
+
+  Future<void> disableChannelStateNotifications() async {
+    final characteristic = _findCharacteristic(channelStatesUuid);
+    if (characteristic == null) {
+      return;
+    }
+
+    try {
+      await characteristic.setNotifyValue(false);
+    } catch (e) {
+      debugPrint('Failed to disable channel state notifications: $e');
+    }
+  }
 }

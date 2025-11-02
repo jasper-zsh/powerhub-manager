@@ -9,6 +9,7 @@ import 'package:app/providers/device_control_provider.dart';
 import 'package:app/screens/orchestration_screen.dart';
 import 'package:app/screens/saved_controller_management_screen.dart';
 import 'package:app/screens/device_control_screen.dart';
+import 'package:app/screens/monitoring_screen.dart';
 
 void main() {
   // Enable debug print for development
@@ -22,18 +23,20 @@ void main() {
         ChangeNotifierProvider(create: (_) => AppStateProvider()),
         ChangeNotifierProvider(create: (_) => OrchestrationProvider()),
         ChangeNotifierProxyProvider<AppStateProvider, DeviceControlProvider>(
-          create: (context) => DeviceControlProvider(
-            onChannelUpdate: (controllerId, channelId, value) async {
-              final appState = context.read<AppStateProvider>();
-              if (appState.selectedDevice?.id != controllerId) {
-                debugPrint(
-                  'Main: channel update requires switching from '
-                  '${appState.selectedDevice?.id} to $controllerId',
-                );
-                await appState.connectToDevice(controllerId);
-              }
-              await appState.updateChannelValue(channelId, value);
-            },
+          create: (context) {
+            final appState = context.read<AppStateProvider>();
+            return DeviceControlProvider(
+              appStateProvider: appState,
+              onChannelUpdate: (controllerId, channelId, value) async {
+                if (appState.selectedDevice?.id != controllerId) {
+                  debugPrint(
+                    'Main: channel update requires switching from '
+                    '${appState.selectedDevice?.id} to $controllerId',
+                  );
+                  await appState.connectToDevice(controllerId);
+                }
+                await appState.updateChannelValue(channelId, value);
+              },
             onPresetTrigger: (controllerId, presetId) async {
               final appState = context.read<AppStateProvider>();
               if (appState.selectedDevice?.id != controllerId) {
@@ -43,7 +46,8 @@ void main() {
                 );
                 await appState.connectToDevice(controllerId);
               }
-              await appState.executePreset(presetId);
+              // Preset functionality has been removed
+              // await appState.executePreset(presetId);
             },
             onFadeCommand:
                 (controllerId, channelId, targetValue, duration) async {
@@ -97,7 +101,8 @@ void main() {
                 );
                 appState.markControllerConnected(existing.id);
                 await appState.readChannelStates();
-                await appState.loadDevicePresets();
+                // Preset functionality has been removed
+                // await appState.loadDevicePresets();
                 return existing;
               }
               if (appState.selectedDevice?.id != controllerId) {
@@ -108,18 +113,32 @@ void main() {
                 await appState.connectToDevice(controllerId);
                 return appState.selectedDevice;
               }
-              await appState.readChannelStates();
-              debugPrint(
-                'Main: channel states refreshed, first value '
-                '${appState.selectedDevice?.channels.first.value ?? 'n/a'}',
-              );
-              await appState.loadDevicePresets();
-              if (appState.selectedDevice != null) {
+              try {
+                await appState.readChannelStates();
+                debugPrint(
+                  'Main: channel states refreshed, first value '
+                  '${appState.selectedDevice?.channels.first.value ?? 'n/a'}',
+                );
+              } catch (e) {
+                debugPrint('Main: Failed to read channel states: $e');
+                // 读取失败说明设备实际上没有连接
+                return null;
+              }
+
+              // Preset functionality has been removed
+              // await appState.loadDevicePresets();
+
+              // 只有在真正连接的情况下才标记为已连接
+              if (appState.selectedDevice != null && appState.isConnected) {
                 appState.markControllerConnected(appState.selectedDevice!.id);
+                debugPrint('Main: Device confirmed connected: ${appState.selectedDevice!.id}');
+              } else {
+                debugPrint('Main: Device not actually connected, skipping markControllerConnected');
               }
               return appState.selectedDevice;
             },
-          ),
+            );
+          },
           update: (context, appState, controlProvider) {
             final controllers = <String, PWMController>{
               for (final controller in appState.connectedControllers)
@@ -156,7 +175,13 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       final appState = Provider.of<AppStateProvider>(context, listen: false);
       await appState.init();
-      appState.startAutoReconnectLoop();
+
+      // 延迟启动自动重连，避免应用启动时立即重连
+      Future.delayed(const Duration(seconds: 30), () {
+        if (mounted) {
+          appState.startAutoReconnectLoop();
+        }
+      });
     });
   }
 
@@ -218,12 +243,14 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
     'Switch Orchestration',
     'Saved Devices',
     'Device Control',
+    'System Monitoring',
   ];
 
   final List<Widget> _pages = const [
     OrchestrationScreen(),
     SavedControllerManagementScreen(),
     DeviceControlScreen(),
+    MonitoringScreen(),
   ];
 
   @override
@@ -247,6 +274,11 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
             icon: Icon(Icons.tune_outlined),
             selectedIcon: Icon(Icons.tune),
             label: 'Control',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.monitor_heart_outlined),
+            selectedIcon: Icon(Icons.monitor_heart),
+            label: 'Monitor',
           ),
         ],
         onDestinationSelected: (index) {

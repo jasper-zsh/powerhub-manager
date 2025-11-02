@@ -22,14 +22,14 @@ class PWMController {
     List<Preset>? presets,
     this.telemetry,
   })  : channels = channels ??
-            List.generate(4, (index) => Channel(id: index, value: 0)),
+            List.generate(6, (index) => Channel(id: index, value: 0)),
         presets = presets ?? [];
 
   // Validation methods
   bool get isValidId => id.isNotEmpty;
   bool get isValidName => name.isNotEmpty;
   bool get isValidRssi => rssi >= -100 && rssi <= 0;
-  bool get hasFourChannels => channels.length == 4;
+  bool get hasSixChannels => channels.length == 6;
 
   // Connect to the device
   void connect() {

@@ -89,7 +89,9 @@ void main() {
 
   setUp(() {
     callbacks = _Callbacks();
+    final mockAppStateProvider = AppStateProvider();
     provider = DeviceControlProvider(
+      appStateProvider: mockAppStateProvider,
       onChannelUpdate: callbacks.onChannelUpdate,
       onPresetTrigger: callbacks.onPresetTrigger,
       onFadeCommand: callbacks.onFadeCommand,

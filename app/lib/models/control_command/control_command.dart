@@ -5,10 +5,10 @@ abstract class ControlCommand {
   ControlCommand({
     required this.channel,
     required this.rawData,
-  }) : assert(channel >= 0 && channel <= 3, 'Channel must be between 0 and 3');
+  }) : assert(channel >= 0 && channel <= 5, 'Channel must be between 0 and 5');
 
   // Validation methods
-  bool get isValidChannel => channel >= 0 && channel <= 3;
+  bool get isValidChannel => channel >= 0 && channel <= 5;
   bool get hasValidRawData => rawData.isNotEmpty;
 
   // Abstract methods that must be implemented by subclasses

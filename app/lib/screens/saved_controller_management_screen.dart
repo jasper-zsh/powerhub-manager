@@ -4,7 +4,6 @@ import 'package:app/providers/app_state_provider.dart';
 import 'package:app/providers/orchestration_provider.dart';
 import 'package:app/models/saved_controller.dart';
 import 'package:app/models/pwm_controller.dart';
-import 'package:app/models/telemetry.dart';
 
 class SavedControllerManagementScreen extends StatefulWidget {
   const SavedControllerManagementScreen({super.key});
@@ -81,10 +80,10 @@ class _SavedControllerManagementScreenState
                                 controller.controllerId
                             ? appState.telemetry ?? connectedDevice?.telemetry
                             : connectedDevice?.telemetry;
-                        final isConnected =
-                            connectedDevice?.isConnected ??
-                            controller.connectionStatus ==
-                                SavedControllerConnectionStatus.connected;
+                        // Use AppStateProvider's health checking instead of device connection status
+                        final isConnected = connectedDevice != null &&
+                            appState.isConnected &&
+                            connectedDevice.id == controller.controllerId;
                         return ListTile(
                           key: ValueKey(controller.controllerId),
                           leading: const Icon(Icons.drag_handle),

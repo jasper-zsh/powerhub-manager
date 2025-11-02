@@ -433,7 +433,8 @@ class OrchestrationProvider with ChangeNotifier {
               break;
             
             case CommandActionType.presetTrigger:
-              await _bleService.executePreset(action.presetId!);
+              // Preset functionality has been removed
+              debugPrint('Preset trigger action is no longer supported');
               break;
           }
         } catch (e) {

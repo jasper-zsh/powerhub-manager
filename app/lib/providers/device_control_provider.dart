@@ -5,6 +5,7 @@ import 'package:app/models/channel.dart';
 import 'package:app/models/preset.dart';
 import 'package:app/models/pwm_controller.dart';
 import 'package:app/models/saved_controller.dart';
+import 'package:app/providers/app_state_provider.dart';
 
 typedef ChannelUpdateCallback = Future<void> Function(
   String controllerId,
@@ -48,12 +49,14 @@ class DeviceControlProvider with ChangeNotifier {
     required BlinkCommandCallback onBlinkCommand,
     required StrobeCommandCallback onStrobeCommand,
     required DeviceReadyCallback onEnsureDeviceReady,
+    required AppStateProvider appStateProvider,
   })  : _onChannelUpdate = onChannelUpdate,
         _onPresetTrigger = onPresetTrigger,
         _onFadeCommand = onFadeCommand,
         _onBlinkCommand = onBlinkCommand,
         _onStrobeCommand = onStrobeCommand,
-        _onEnsureDeviceReady = onEnsureDeviceReady;
+        _onEnsureDeviceReady = onEnsureDeviceReady,
+        _appStateProvider = appStateProvider;
 
   final ChannelUpdateCallback _onChannelUpdate;
   final PresetTriggerCallback _onPresetTrigger;
@@ -61,6 +64,7 @@ class DeviceControlProvider with ChangeNotifier {
   final BlinkCommandCallback _onBlinkCommand;
   final StrobeCommandCallback _onStrobeCommand;
   final DeviceReadyCallback _onEnsureDeviceReady;
+  final AppStateProvider _appStateProvider;
 
   List<SavedController> _savedControllers = <SavedController>[];
   final Map<String, PWMController> _connectedDevices = <String, PWMController>{};
@@ -72,6 +76,7 @@ class DeviceControlProvider with ChangeNotifier {
   final Map<int, Timer> _setCommandDebouncers = <int, Timer>{};
   List<int> _channelSnapshot = const <int>[];
   List<int> _presetSnapshot = const <int>[];
+  Timer? _autoReconnectDebouncer;
 
   List<SavedController> get savedControllers =>
       List.unmodifiable(_savedControllers);
@@ -101,14 +106,8 @@ class DeviceControlProvider with ChangeNotifier {
   bool get hasSelection => _selectedControllerId != null;
 
   bool get isSelectedControllerConnected {
-    final device = activeDevice;
-    if (device != null) {
-      return device.isConnected;
-    }
-
-    final saved = selectedSavedController;
-    return saved != null &&
-        saved.connectionStatus == SavedControllerConnectionStatus.connected;
+    // Use AppStateProvider's connection health checking instead of local logic
+    return _appStateProvider.isConnected && selectedSavedController != null;
   }
 
   PWMController? get activeDevice =>
@@ -131,6 +130,7 @@ class DeviceControlProvider with ChangeNotifier {
       timer.cancel();
     }
     _setCommandDebouncers.clear();
+    _autoReconnectDebouncer?.cancel();
     super.dispose();
   }
 
@@ -256,8 +256,13 @@ class DeviceControlProvider with ChangeNotifier {
     }
 
     if (_selectedControllerId != null &&
-        (_activeDevice == null || !_activeDevice!.isConnected)) {
+        (_activeDevice == null || !_appStateProvider.isConnected)) {
       _scheduleEnsure(_selectedControllerId!);
+
+      // Trigger auto-reconnect if connection is lost (with debouncing)
+      if (!_appStateProvider.isConnected) {
+        _scheduleAutoReconnect();
+      }
     }
 
     if (savedChanged ||
@@ -433,5 +438,49 @@ class DeviceControlProvider with ChangeNotifier {
       _isBusy = false;
       notifyListeners();
     }
+  }
+
+  void _scheduleAutoReconnect() {
+    // Cancel existing debouncer
+    _autoReconnectDebouncer?.cancel();
+
+    // Schedule new reconnect attempt with delay
+    _autoReconnectDebouncer = Timer(const Duration(seconds: 5), () {
+      _attemptAutoReconnect();
+    });
+
+    debugPrint('⏰ Scheduled auto-reconnect in 5 seconds');
+  }
+
+  void _attemptAutoReconnect() {
+    final savedController = selectedSavedController;
+    if (savedController == null) return;
+
+    // Only attempt reconnect if not already connected and attempts are reasonable
+    if (_appStateProvider.isConnected) {
+      debugPrint('📱 Device already connected, skipping auto-reconnect');
+      return;
+    }
+
+    // Note: We allow reconnect even if saved controller is marked as connected,
+    // because the saved status might be stale if the device disconnected unexpectedly
+    if (savedController.connectionStatus == SavedControllerConnectionStatus.connected) {
+      debugPrint('📱 Saved controller marked as connected, but device appears disconnected - attempting reconnect anyway');
+    }
+
+    // Check if we've exceeded max attempts to prevent infinite reconnect
+    final stats = _appStateProvider.reconnectStatistics;
+    final recentAttempts = stats['recentAttempts'] as int? ?? 0;
+    final maxAttempts = 10;
+
+    if (recentAttempts >= maxAttempts) {
+      debugPrint('🚫 Max reconnect attempts reached ($maxAttempts), stopping auto-reconnect');
+      return;
+    }
+
+    // Use AppStateProvider's reconnection manager
+    _appStateProvider.reconnectManager.triggerReconnect();
+
+    debugPrint('🔄 Attempting auto-reconnect to ${savedController.alias} (${savedController.controllerId}) - Attempt ${recentAttempts + 1}/$maxAttempts');
   }
 }

@@ -120,12 +120,7 @@ class _ConnectionMonitor extends StatelessWidget {
         savedController.controllerId: savedController.alias,
     };
 
-    final telemetry = (appState.selectedDevice?.id == selectedId)
-        ? appState.telemetry
-        : activeDevice?.telemetry;
-    final telemetryError = (appState.selectedDevice?.id == selectedId)
-        ? appState.telemetryError
-        : '';
+    // 遥测数据现在通过 AppStateProvider 统一管理
 
     final scanningMessage = switch (record?.scanState) {
       ScanState.scanning => '正在扫描此设备…',
@@ -193,60 +188,124 @@ class _ConnectionMonitor extends StatelessWidget {
                 style: Theme.of(context).textTheme.bodySmall,
               ),
             ],
-            if (telemetry != null) ...[
+            if (_shouldShowTelemetry(appState)) ...[
               const SizedBox(height: 12),
-              Wrap(
-                spacing: 12,
-                runSpacing: 8,
-                children: [
-                  _TelemetryChip(
-                    label: '电压',
-                    value:
-                        '${(telemetry.vinMillivolts / 1000.0).toStringAsFixed(2)} V',
-                  ),
-                  _TelemetryChip(
-                    label: '温度',
-                    value:
-                        '${telemetry.temperatureCelsius.toStringAsFixed(1)} °C',
-                  ),
-                  _TelemetryChip(
-                    label: '高温阈值',
-                    value:
-                        '${telemetry.highThresholdCelsius.toStringAsFixed(1)} °C',
-                  ),
-                  _TelemetryChip(
-                    label: '恢复阈值',
-                    value:
-                        '${telemetry.recoverThresholdCelsius.toStringAsFixed(1)} °C',
-                  ),
-                  _TelemetryChip(
-                    label: '睡眠阈值',
-                    value:
-                        '${telemetry.sleepThresholdVolts.toStringAsFixed(2)} V',
-                  ),
-                  _TelemetryChip(
-                    label: '唤醒阈值',
-                    value:
-                        '${telemetry.wakeThresholdVolts.toStringAsFixed(2)} V',
-                  ),
-                  if (telemetry.isThermalProtectionActive)
-                    const _TelemetryChip(
-                      label: '热保护',
-                      value: '激活',
-                      emphasize: true,
-                    ),
-                ],
-              ),
-            ] else if (telemetryError.isNotEmpty) ...[
+              _buildTelemetryChips(appState),
+            ] else if (_getTelemetryError(appState).isNotEmpty) ...[
               const SizedBox(height: 12),
               Text(
-                telemetryError,
+                _getTelemetryError(appState),
                 style: const TextStyle(color: Colors.redAccent, fontSize: 12),
               ),
             ],
           ],
         ),
       ),
+    );
+  }
+
+  // 检查是否应该显示遥测数据
+  bool _shouldShowTelemetry(AppStateProvider appState) {
+    return appState.monitoringData != null || appState.telemetry != null;
+  }
+
+  // 获取遥测错误信息
+  String _getTelemetryError(AppStateProvider appState) {
+    if (appState.monitoringError.isNotEmpty) {
+      return appState.monitoringError;
+    }
+    return appState.telemetryError;
+  }
+
+  // 构建遥测数据显示
+  Widget _buildTelemetryChips(AppStateProvider appState) {
+    final monitoringData = appState.monitoringData;
+    final telemetryData = appState.telemetry;
+
+    return Wrap(
+      spacing: 12,
+      runSpacing: 8,
+      children: [
+        // 电压显示（优先使用监控数据）
+        if (appState.inputVoltage != null)
+          _TelemetryChip(
+            label: '电压',
+            value: '${appState.inputVoltage!.toStringAsFixed(2)} V',
+          ),
+
+        // 双区温度显示（仅监控数据支持）
+        if (monitoringData != null) ...[
+          if (monitoringData.powerZoneTempCelsius != null)
+            _TelemetryChip(
+              label: '电源区温度',
+              value: '${monitoringData.powerZoneTempCelsius!.toStringAsFixed(1)} °C',
+              emphasize: monitoringData.statusFlags.thermalProtectionActive,
+            ),
+          if (monitoringData.controlZoneTempCelsius != null)
+            _TelemetryChip(
+              label: '控制区温度',
+              value: '${monitoringData.controlZoneTempCelsius!.toStringAsFixed(1)} °C',
+              emphasize: monitoringData.statusFlags.thermalProtectionActive,
+            ),
+        ] else if (telemetryData != null && appState.hasValidTemperatureData)
+          // 兼容旧的单区温度显示
+          _TelemetryChip(
+            label: '温度',
+            value: '${telemetryData.temperatureCelsius.toStringAsFixed(1)} °C',
+            emphasize: appState.isThermalProtectionActive,
+          ),
+
+        // 总电流显示（仅监控数据支持）
+        if (monitoringData != null)
+          _TelemetryChip(
+            label: '总电流',
+            value: '${monitoringData.totalInputCurrent.toStringAsFixed(3)} A',
+          ),
+
+        // 兼容旧的遥测阈值显示
+        if (telemetryData != null) ...[
+          _TelemetryChip(
+            label: '高温阈值',
+            value: '${telemetryData.highThresholdCelsius.toStringAsFixed(1)} °C',
+          ),
+          _TelemetryChip(
+            label: '恢复阈值',
+            value: '${telemetryData.recoverThresholdCelsius.toStringAsFixed(1)} °C',
+          ),
+          _TelemetryChip(
+            label: '睡眠阈值',
+            value: '${telemetryData.sleepThresholdVolts.toStringAsFixed(2)} V',
+          ),
+          _TelemetryChip(
+            label: '唤醒阈值',
+            value: '${telemetryData.wakeThresholdVolts.toStringAsFixed(2)} V',
+          ),
+        ],
+
+        // 热保护状态显示
+        if (appState.isThermalProtectionActive)
+          const _TelemetryChip(
+            label: '热保护',
+            value: '激活',
+            emphasize: true,
+          ),
+
+        // 数据有效性指示
+        if (monitoringData != null) ...[
+          if (!monitoringData.statusFlags.temperatureDataValid)
+            const _TelemetryChip(
+              label: '温度数据',
+              value: '无效',
+              emphasize: true,
+            ),
+          if (!monitoringData.statusFlags.currentDataValid)
+            const _TelemetryChip(
+              label: '电流数据',
+              value: '无效',
+              emphasize: true,
+            ),
+        ],
+      ],
     );
   }
 }
