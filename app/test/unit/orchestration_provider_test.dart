@@ -141,16 +141,26 @@ void main() {
 
   test('renameToggle updates toggle ID and related references', () async {
     // Rename the toggle from 'toggle-main' to 'toggle-renamed'
-    final success = await provider.renameToggle('toggle-main', 'toggle-renamed');
+    final success = await provider.renameToggle(
+      'toggle-main',
+      'toggle-renamed',
+    );
     expect(success, isTrue);
 
     // Verify the scene was updated
     final updatedScene = provider.activeScene!;
-    expect(updatedScene.states.every((state) => state.toggleId == 'toggle-renamed'), isTrue);
-    
+    expect(
+      updatedScene.states.every((state) => state.toggleId == 'toggle-renamed'),
+      isTrue,
+    );
+
     // Verify state IDs were updated (only if they follow the pattern 'toggleId-stateId')
-    final onState = updatedScene.states.firstWhere((state) => state.stateId == 'on');
-    final offState = updatedScene.states.firstWhere((state) => state.stateId == 'off');
+    final onState = updatedScene.states.firstWhere(
+      (state) => state.stateId == 'on',
+    );
+    final offState = updatedScene.states.firstWhere(
+      (state) => state.stateId == 'off',
+    );
     expect(onState.toggleId, equals('toggle-renamed'));
     expect(offState.toggleId, equals('toggle-renamed'));
 
@@ -187,22 +197,26 @@ void main() {
   test('updateStateLabel updates state label correctly', () async {
     // Update the state label from 'On' to 'Enabled'
     await provider.updateStateLabel('toggle-main', 'on', 'Enabled');
-    
+
     // Verify the label was updated
     final updatedScene = provider.activeScene!;
-    final onState = updatedScene.states.firstWhere((state) => state.stateId == 'on');
+    final onState = updatedScene.states.firstWhere(
+      (state) => state.stateId == 'on',
+    );
     expect(onState.label, equals('Enabled'));
   });
 
   test('updateStateLabel does nothing for empty label', () async {
     final originalLabel = 'On';
-    
+
     // Try to update with empty label
     await provider.updateStateLabel('toggle-main', 'on', '');
-    
+
     // Verify the label remains unchanged
     final updatedScene = provider.activeScene!;
-    final onState = updatedScene.states.firstWhere((state) => state.stateId == 'on');
+    final onState = updatedScene.states.firstWhere(
+      (state) => state.stateId == 'on',
+    );
     expect(onState.label, equals(originalLabel));
   });
 
@@ -235,6 +249,50 @@ void main() {
     expect(action.type, equals(CommandActionType.presetTrigger));
     expect(action.presetId, equals(5));
   });
+
+  test(
+    'updateToggleSlot enforces unique assignment and custom numbering',
+    () async {
+      final extendedScene = scene.copyWith(
+        states: [
+          ...scene.states,
+          ToggleState(
+            toggleId: 'toggle-second',
+            stateId: 'toggle-second-on',
+            label: 'Second On',
+          ),
+          ToggleState(
+            toggleId: 'toggle-second',
+            stateId: 'toggle-second-off',
+            label: 'Second Off',
+          ),
+        ],
+      );
+      await provider.saveScene(extendedScene);
+
+      final assignMain = await provider.updateToggleSlot('toggle-main', 4);
+      expect(assignMain, isTrue);
+      expect(provider.activeScene!.switchSlots['toggle-main'], equals(4));
+
+      final conflict = await provider.updateToggleSlot('toggle-second', 4);
+      expect(conflict, isFalse);
+
+      final cleared = await provider.updateToggleSlot('toggle-main', null);
+      expect(cleared, isTrue);
+      expect(
+        provider.activeScene!.switchSlots.containsKey('toggle-main'),
+        isFalse,
+      );
+
+      final assignSecond = await provider.updateToggleSlot('toggle-second', 7);
+      expect(assignSecond, isTrue);
+      final config = provider.buildSwitchHubConfig('scene-1');
+      final secondSwitch = config.switches.firstWhere(
+        (sw) => sw.uiConfig?.channelLabel == 'toggle-second',
+      );
+      expect(secondSwitch.switchId, equals(7));
+    },
+  );
 
   test('buildSwitchHubConfig exports schema compliant payload', () {
     final config = provider.buildSwitchHubConfig('scene-1');

@@ -13,7 +13,8 @@ class OrchestrationScreen extends ConsumerStatefulWidget {
   const OrchestrationScreen({super.key});
 
   @override
-  ConsumerState<OrchestrationScreen> createState() => _OrchestrationScreenState();
+  ConsumerState<OrchestrationScreen> createState() =>
+      _OrchestrationScreenState();
 }
 
 class _OrchestrationScreenState extends ConsumerState<OrchestrationScreen> {
@@ -49,8 +50,9 @@ class _OrchestrationScreenState extends ConsumerState<OrchestrationScreen> {
           IconButton(
             icon: const Icon(Icons.cloud_upload),
             tooltip: '导出/推送到 SwitchHub',
-            onPressed:
-                scene == null ? null : () => _openSyncSheet(scene, provider),
+            onPressed: scene == null
+                ? null
+                : () => _openSyncSheet(scene, provider),
           ),
         ],
       ),
@@ -64,8 +66,8 @@ class _OrchestrationScreenState extends ConsumerState<OrchestrationScreen> {
       body: provider.isLoading
           ? const Center(child: CircularProgressIndicator())
           : scene == null
-              ? _buildEmptyState()
-              : _buildSceneBody(provider, scene),
+          ? _buildEmptyState()
+          : _buildSceneBody(provider, scene),
     );
   }
 
@@ -88,22 +90,18 @@ class _OrchestrationScreenState extends ConsumerState<OrchestrationScreen> {
     );
   }
 
-  Widget _buildSceneBody(
-    OrchestrationProvider provider,
-    ToggleScene scene,
-  ) {
+  Widget _buildSceneBody(OrchestrationProvider provider, ToggleScene scene) {
     final grouped = _groupStates(scene);
     final children = <Widget>[
       _buildSceneHeader(provider, scene),
       const SizedBox(height: 16),
-      if (grouped.isEmpty) _buildNoToggleBanner() else ...grouped.map(
-        (entry) => _buildToggleSection(
-          provider,
-          scene,
-          entry.key,
-          entry.value,
+      if (grouped.isEmpty)
+        _buildNoToggleBanner()
+      else
+        ...grouped.map(
+          (entry) =>
+              _buildToggleSection(provider, scene, entry.key, entry.value),
         ),
-      ),
       const SizedBox(height: 16),
       _buildExecutionLogCard(provider),
       const SizedBox(height: 32),
@@ -115,10 +113,7 @@ class _OrchestrationScreenState extends ConsumerState<OrchestrationScreen> {
     );
   }
 
-  Widget _buildSceneHeader(
-    OrchestrationProvider provider,
-    ToggleScene scene,
-  ) {
+  Widget _buildSceneHeader(OrchestrationProvider provider, ToggleScene scene) {
     final scenes = provider.scenes;
     return Card(
       child: Padding(
@@ -131,9 +126,7 @@ class _OrchestrationScreenState extends ConsumerState<OrchestrationScreen> {
                 Expanded(
                   child: DropdownButtonFormField<String>(
                     value: scene.id,
-                    decoration: const InputDecoration(
-                      labelText: '当前场景',
-                    ),
+                    decoration: const InputDecoration(labelText: '当前场景'),
                     items: scenes
                         .map(
                           (entry) => DropdownMenuItem<String>(
@@ -244,6 +237,7 @@ class _OrchestrationScreenState extends ConsumerState<OrchestrationScreen> {
       (state) => state.stateId == selectedStateId,
       orElse: () => states.first,
     );
+    final switchSlot = scene.switchSlots[toggleId];
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -259,13 +253,16 @@ class _OrchestrationScreenState extends ConsumerState<OrchestrationScreen> {
                   _selectedStates[toggleId] = stateId;
                 });
               },
-              onAddCommandBundle: () => _showBundleEditor(_stateForId(states, _selectedStates[toggleId]!)),
+              onAddCommandBundle: () => _showBundleEditor(
+                _stateForId(states, _selectedStates[toggleId]!),
+              ),
               onEditBundle: (bundle) => _showBundleEditor(
                 _stateForId(states, _selectedStates[toggleId]!),
                 existing: bundle,
               ),
               controllerAliases: const <String, String>{},
               missingControllers: provider.missingControllers,
+              switchSlot: switchSlot,
             ),
             Positioned(
               right: 24,
@@ -275,6 +272,9 @@ class _OrchestrationScreenState extends ConsumerState<OrchestrationScreen> {
                   switch (value) {
                     case 'rename':
                       _renameToggle(toggleId);
+                      break;
+                    case 'slot':
+                      _editToggleSlot(toggleId);
                       break;
                     case 'delete':
                       _removeToggle(toggleId);
@@ -287,6 +287,13 @@ class _OrchestrationScreenState extends ConsumerState<OrchestrationScreen> {
                     child: ListTile(
                       leading: Icon(Icons.drive_file_rename_outline),
                       title: Text('重命名'),
+                    ),
+                  ),
+                  PopupMenuItem(
+                    value: 'slot',
+                    child: ListTile(
+                      leading: Icon(Icons.confirmation_number_outlined),
+                      title: Text('设置开关位号'),
                     ),
                   ),
                   PopupMenuItem(
@@ -321,7 +328,8 @@ class _OrchestrationScreenState extends ConsumerState<OrchestrationScreen> {
           child: Align(
             alignment: Alignment.centerRight,
             child: TextButton.icon(
-              onPressed: () => _previewState(toggleId, _selectedStates[toggleId]!),
+              onPressed: () =>
+                  _previewState(toggleId, _selectedStates[toggleId]!),
               icon: const Icon(Icons.visibility),
               label: const Text('预览当前状态序列'),
             ),
@@ -351,10 +359,7 @@ class _OrchestrationScreenState extends ConsumerState<OrchestrationScreen> {
               children: [
                 const Icon(Icons.history),
                 const SizedBox(width: 8),
-                Text(
-                  '执行日志',
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
+                Text('执行日志', style: Theme.of(context).textTheme.titleMedium),
                 const Spacer(),
                 IconButton(
                   icon: const Icon(Icons.delete_sweep),
@@ -374,29 +379,31 @@ class _OrchestrationScreenState extends ConsumerState<OrchestrationScreen> {
             if (logs.isEmpty)
               const Text('暂无执行记录。')
             else
-              ...logs.take(5).map(
-                (log) => ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  leading: Icon(
-                    log.isSuccess ? Icons.check_circle : Icons.error,
-                    color: log.isSuccess ? Colors.green : Colors.orange,
+              ...logs
+                  .take(5)
+                  .map(
+                    (log) => ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: Icon(
+                        log.isSuccess ? Icons.check_circle : Icons.error,
+                        color: log.isSuccess ? Colors.green : Colors.orange,
+                      ),
+                      title: Text(log.sceneId),
+                      subtitle: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('触发源：${log.triggerSource}'),
+                          Text('结果：${log.result}'),
+                          if (log.notes != null)
+                            Text(
+                              log.notes!,
+                              style: const TextStyle(color: Colors.grey),
+                            ),
+                        ],
+                      ),
+                      trailing: Text(_formatTimestamp(log.triggeredAt)),
+                    ),
                   ),
-                  title: Text(log.sceneId),
-                  subtitle: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('触发源：${log.triggerSource}'),
-                      Text('结果：${log.result}'),
-                      if (log.notes != null)
-                        Text(
-                          log.notes!,
-                          style: const TextStyle(color: Colors.grey),
-                        ),
-                    ],
-                  ),
-                  trailing: Text(_formatTimestamp(log.triggeredAt)),
-                ),
-              ),
           ],
         ),
       ),
@@ -412,16 +419,13 @@ class _OrchestrationScreenState extends ConsumerState<OrchestrationScreen> {
     final existing = grouped.map((entry) => entry.key).toSet();
     _selectedStates.removeWhere((key, _) => !existing.contains(key));
     for (final entry in grouped) {
-      _selectedStates.putIfAbsent(
-        entry.key,
-        () {
-          final defaultState = entry.value.firstWhere(
-            (state) => state.isDefault,
-            orElse: () => entry.value.first,
-          );
-          return defaultState.stateId;
-        },
-      );
+      _selectedStates.putIfAbsent(entry.key, () {
+        final defaultState = entry.value.firstWhere(
+          (state) => state.isDefault,
+          orElse: () => entry.value.first,
+        );
+        return defaultState.stateId;
+      });
     }
   }
 
@@ -469,7 +473,8 @@ class _OrchestrationScreenState extends ConsumerState<OrchestrationScreen> {
                         setDialogState(() => isSaving = true);
                         final toggleId =
                             'toggle-${DateTime.now().microsecondsSinceEpoch}';
-                        final sceneId = 'scene-${DateTime.now().microsecondsSinceEpoch}';
+                        final sceneId =
+                            'scene-${DateTime.now().microsecondsSinceEpoch}';
                         final states = <ToggleState>[
                           ToggleState(
                             toggleId: toggleId,
@@ -595,9 +600,7 @@ class _OrchestrationScreenState extends ConsumerState<OrchestrationScreen> {
         title: const Text('新增开关'),
         content: TextFormField(
           initialValue: label,
-          decoration: const InputDecoration(
-            labelText: '显示名称 (可选)',
-          ),
+          decoration: const InputDecoration(labelText: '显示名称 (可选)'),
           onChanged: (value) => label = value,
         ),
         actions: [
@@ -659,6 +662,94 @@ class _OrchestrationScreenState extends ConsumerState<OrchestrationScreen> {
       } else {
         _showSnack('名称已存在或无效');
       }
+    }
+  }
+
+  Future<void> _editToggleSlot(String toggleId) async {
+    final provider = ref.read(orchestrationProviderProvider);
+    final currentSlot = provider.activeScene?.switchSlots[toggleId];
+    String slotInput = currentSlot?.toString() ?? '';
+    bool isSaving = false;
+    String? errorText;
+
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('设置开关位号'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              TextFormField(
+                initialValue: slotInput,
+                keyboardType: TextInputType.number,
+                decoration: InputDecoration(
+                  labelText: 'Switch 位号',
+                  helperText: '留空表示自动分配，正整数可跳号指定',
+                  errorText: errorText,
+                ),
+                onChanged: (value) {
+                  slotInput = value;
+                  setDialogState(() => errorText = null);
+                },
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                '位号对应 SwitchHub 上的物理位置。',
+                style: TextStyle(fontSize: 12, color: Colors.grey),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('取消'),
+            ),
+            ElevatedButton(
+              onPressed: isSaving
+                  ? null
+                  : () async {
+                      final raw = slotInput.trim();
+                      int? slot;
+                      if (raw.isNotEmpty) {
+                        final parsed = int.tryParse(raw);
+                        if (parsed == null || parsed <= 0) {
+                          setDialogState(() => errorText = '请输入大于 0 的整数');
+                          return;
+                        }
+                        slot = parsed;
+                      }
+                      setDialogState(() => isSaving = true);
+                      final success = await provider.updateToggleSlot(
+                        toggleId,
+                        slot,
+                      );
+                      if (!success) {
+                        setDialogState(() {
+                          isSaving = false;
+                          errorText = '该位号已被其他开关使用';
+                        });
+                        return;
+                      }
+                      if (mounted) {
+                        Navigator.of(context).pop(true);
+                      }
+                    },
+              child: isSaving
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Text('保存'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (result == true) {
+      _showSnack('开关位号已更新');
     }
   }
 
@@ -728,8 +819,11 @@ class _OrchestrationScreenState extends ConsumerState<OrchestrationScreen> {
     String bundleLabel =
         existing?.label ?? 'Bundle ${state.commandBundles.length + 1}';
     bool isEnabled = existing?.isEnabled ?? true;
-    final bundleId = existing?.id ?? 'bundle-${DateTime.now().microsecondsSinceEpoch}';
-    final actions = List<CommandAction>.from(existing?.actions ?? <CommandAction>[]);
+    final bundleId =
+        existing?.id ?? 'bundle-${DateTime.now().microsecondsSinceEpoch}';
+    final actions = List<CommandAction>.from(
+      existing?.actions ?? <CommandAction>[],
+    );
 
     await showModalBottomSheet<void>(
       context: context,
@@ -760,7 +854,8 @@ class _OrchestrationScreenState extends ConsumerState<OrchestrationScreen> {
                     contentPadding: EdgeInsets.zero,
                     value: isEnabled,
                     title: const Text('启用'),
-                    onChanged: (value) => setSheetState(() => isEnabled = value),
+                    onChanged: (value) =>
+                        setSheetState(() => isEnabled = value),
                   ),
                   const SizedBox(height: 12),
                   if (actions.isEmpty)
@@ -866,14 +961,16 @@ class _OrchestrationScreenState extends ConsumerState<OrchestrationScreen> {
   }
 
   Future<CommandAction?> _showActionEditor({CommandAction? existing}) async {
-    final savedControllers =
-        ref.read(savedControllerControllerProvider).controllers;
+    final savedControllers = ref
+        .read(savedControllerControllerProvider)
+        .controllers;
     String controllerId = existing?.controllerId ?? '';
     String channelText = existing?.channel?.toString() ?? '';
     String valueText = existing?.value?.toString() ?? '';
-    String? selectedSavedControllerId = savedControllers.any(
-      (controller) => controller.controllerId == controllerId,
-    )
+    String? selectedSavedControllerId =
+        savedControllers.any(
+          (controller) => controller.controllerId == controllerId,
+        )
         ? controllerId
         : null;
 
@@ -896,9 +993,7 @@ class _OrchestrationScreenState extends ConsumerState<OrchestrationScreen> {
                 if (savedControllers.isNotEmpty)
                   DropdownButtonFormField<String>(
                     value: selectedSavedControllerId,
-                    decoration: const InputDecoration(
-                      labelText: '从已保存设备选择',
-                    ),
+                    decoration: const InputDecoration(labelText: '从已保存设备选择'),
                     items: savedControllers
                         .map(
                           (controller) => DropdownMenuItem<String>(
@@ -935,7 +1030,9 @@ class _OrchestrationScreenState extends ConsumerState<OrchestrationScreen> {
                     padding: const EdgeInsets.only(top: 8),
                     child: Text(
                       errorMessage!,
-                      style: TextStyle(color: Theme.of(context).colorScheme.error),
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.error,
+                      ),
                     ),
                   ),
               ],
@@ -1026,10 +1123,8 @@ class _OrchestrationScreenState extends ConsumerState<OrchestrationScreen> {
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
-      builder: (context) => SwitchHubSyncSheet(
-        scene: scene,
-        provider: provider,
-      ),
+      builder: (context) =>
+          SwitchHubSyncSheet(scene: scene, provider: provider),
     );
   }
 
@@ -1042,8 +1137,8 @@ class _OrchestrationScreenState extends ConsumerState<OrchestrationScreen> {
     if (!mounted) {
       return;
     }
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message)),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 }

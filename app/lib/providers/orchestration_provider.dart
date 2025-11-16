@@ -20,10 +20,10 @@ class CommandPreviewResult {
     List<String>? bundleOrder,
     List<String>? warnings,
     List<String>? missingBundles,
-  })  : actions = actions ?? _actionsFromSequences(sequenceItems),
-        bundleOrder = bundleOrder ?? const <String>[],
-        warnings = warnings ?? <String>[],
-        missingBundles = missingBundles ?? <String>[];
+  }) : actions = actions ?? _actionsFromSequences(sequenceItems),
+       bundleOrder = bundleOrder ?? const <String>[],
+       warnings = warnings ?? <String>[],
+       missingBundles = missingBundles ?? <String>[];
 
   final List<SwitchHubSequenceItem> sequenceItems;
   final List<CommandAction> actions;
@@ -62,10 +62,9 @@ class OrchestrationProvider with ChangeNotifier {
     StorageService? storage,
     BLEService? bleService,
     SwitchHubBleService? switchHubBleService,
-  })
-    : _storage = storage ?? StorageService(),
-      _bleService = bleService ?? BLEService(),
-      _switchHubBleService = switchHubBleService ?? SwitchHubBleService();
+  }) : _storage = storage ?? StorageService(),
+       _bleService = bleService ?? BLEService(),
+       _switchHubBleService = switchHubBleService ?? SwitchHubBleService();
 
   final StorageService _storage;
   final BLEService _bleService;
@@ -114,7 +113,6 @@ class OrchestrationProvider with ChangeNotifier {
       notifyListeners();
     }
   }
-
 
   Future<ToggleScene> saveScene(ToggleScene scene) async {
     final nextScene = scene.copyWith();
@@ -219,7 +217,13 @@ class OrchestrationProvider with ChangeNotifier {
         .where((rule) => rule.toggleId != toggleId)
         .toList();
 
-    final updatedScene = scene.copyWith(states: states, rules: rules);
+    final slots = Map<String, int>.from(scene.switchSlots)..remove(toggleId);
+
+    final updatedScene = scene.copyWith(
+      states: states,
+      rules: rules,
+      switchSlots: slots,
+    );
 
     await saveScene(updatedScene);
   }
@@ -234,9 +238,7 @@ class OrchestrationProvider with ChangeNotifier {
     }
 
     final scene = _activeScene!;
-    final hasConflict = scene.states.any(
-      (state) => state.toggleId == trimmed,
-    );
+    final hasConflict = scene.states.any((state) => state.toggleId == trimmed);
     if (hasConflict) {
       return false;
     }
@@ -248,10 +250,7 @@ class OrchestrationProvider with ChangeNotifier {
       final nextStateId = state.stateId.startsWith('$toggleId-')
           ? state.stateId.replaceFirst('$toggleId-', '$trimmed-')
           : state.stateId;
-      return state.copyWith(
-        toggleId: trimmed,
-        stateId: nextStateId,
-      );
+      return state.copyWith(toggleId: trimmed, stateId: nextStateId);
     }).toList();
 
     final updatedRules = scene.rules.map((rule) {
@@ -270,11 +269,55 @@ class OrchestrationProvider with ChangeNotifier {
       );
     }).toList();
 
+    final updatedSlots = Map<String, int>.from(scene.switchSlots);
+    final slotValue = updatedSlots.remove(toggleId);
+    if (slotValue != null) {
+      updatedSlots[trimmed] = slotValue;
+    }
+
     final updatedScene = scene.copyWith(
       states: updatedStates,
       rules: updatedRules,
+      switchSlots: updatedSlots,
     );
 
+    await saveScene(updatedScene);
+    return true;
+  }
+
+  Future<bool> updateToggleSlot(String toggleId, int? slot) async {
+    if (_activeScene == null) {
+      return false;
+    }
+
+    final scene = _activeScene!;
+    final containsToggle = scene.states.any(
+      (state) => state.toggleId == toggleId,
+    );
+    if (!containsToggle) {
+      return false;
+    }
+
+    final slots = Map<String, int>.from(scene.switchSlots);
+    if (slot == null) {
+      if (!slots.containsKey(toggleId)) {
+        return true;
+      }
+      slots.remove(toggleId);
+    } else {
+      if (slot <= 0) {
+        return false;
+      }
+      final hasConflict = slots.entries.any(
+        (entry) => entry.key != toggleId && entry.value == slot,
+      );
+      if (hasConflict) {
+        return false;
+      }
+      slots[toggleId] = slot;
+    }
+
+    final updatedScene = scene.copyWith(switchSlots: slots);
     await saveScene(updatedScene);
     return true;
   }
@@ -514,6 +557,7 @@ class OrchestrationProvider with ChangeNotifier {
     _logs = await _storage.loadExecutionLogs();
     notifyListeners();
   }
+
   Future<bool> executeCommands(CommandPreviewResult preview) async {
     // SwitchHub 设备会在硬件端执行多目标编排逻辑，App 仅保留单设备执行能力以兼容旧流程。
     try {
@@ -534,7 +578,9 @@ class OrchestrationProvider with ChangeNotifier {
           }
         } catch (e) {
           hasErrors = true;
-          debugPrint('Failed to execute action for controller ${action.controllerId}: $e');
+          debugPrint(
+            'Failed to execute action for controller ${action.controllerId}: $e',
+          );
         }
       }
       return !hasErrors;
@@ -544,7 +590,6 @@ class OrchestrationProvider with ChangeNotifier {
     }
   }
 
-  
   Future<void> clearLogs() async {
     await _storage.clearExecutionLogs();
     _logs = [];
@@ -595,30 +640,27 @@ class OrchestrationProvider with ChangeNotifier {
         ? <String, String>{}
         : Map<String, String>.from(provided);
     for (final toggleId in _toggleOrder(scene)) {
-      snapshot.putIfAbsent(
-        toggleId,
-        () {
-          final states = scene.states
-              .where((state) => state.toggleId == toggleId)
-              .toList();
-          final defaultState = states.firstWhere(
-            (state) => state.isDefault,
-            orElse: () => states.first,
-          );
-          return defaultState.stateId;
-        },
-      );
+      snapshot.putIfAbsent(toggleId, () {
+        final states = scene.states
+            .where((state) => state.toggleId == toggleId)
+            .toList();
+        final defaultState = states.firstWhere(
+          (state) => state.isDefault,
+          orElse: () => states.first,
+        );
+        return defaultState.stateId;
+      });
     }
     return snapshot;
   }
 }
 
-List<SwitchHubSequenceItem> _sequencesFromActions(
-  List<CommandAction> actions,
-) {
+List<SwitchHubSequenceItem> _sequencesFromActions(List<CommandAction> actions) {
   final grouped = <String, List<CommandAction>>{};
   for (final action in actions) {
-    grouped.putIfAbsent(action.controllerId, () => <CommandAction>[]).add(action);
+    grouped
+        .putIfAbsent(action.controllerId, () => <CommandAction>[])
+        .add(action);
   }
 
   final sequence = <SwitchHubSequenceItem>[];
@@ -643,10 +685,7 @@ List<SwitchHubSequenceItem> _sequencesFromActions(
     }
     if (packets.isNotEmpty) {
       sequence.add(
-        SwitchHubSequenceItem(
-          targetMac: controllerId,
-          commandPackets: packets,
-        ),
+        SwitchHubSequenceItem(targetMac: controllerId, commandPackets: packets),
       );
     }
   });

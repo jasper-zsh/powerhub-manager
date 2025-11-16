@@ -15,6 +15,7 @@ class ToggleCard extends StatelessWidget {
     this.onEditBundle,
     this.controllerAliases = const <String, String>{},
     this.missingControllers = const <String>{},
+    this.switchSlot,
   });
 
   final String toggleId;
@@ -25,6 +26,7 @@ class ToggleCard extends StatelessWidget {
   final ToggleActionPressed? onEditBundle;
   final Map<String, String> controllerAliases;
   final Set<String> missingControllers;
+  final int? switchSlot;
 
   @override
   Widget build(BuildContext context) {
@@ -45,13 +47,12 @@ class ToggleCard extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  toggleId,
-                  style: theme.textTheme.titleMedium,
-                ),
+                Text(toggleId, style: theme.textTheme.titleMedium),
                 const SizedBox(height: 4),
                 Text(
-                  '${states.length} 状态 · ${currentState.commandBundles.length} 个命令组合',
+                  '${states.length} 状态 · '
+                  '${currentState.commandBundles.length} 个命令组合 · '
+                  '位号: ${switchSlot ?? '自动'}',
                   style: theme.textTheme.bodySmall?.copyWith(
                     color: theme.textTheme.bodySmall?.color?.withOpacity(0.7),
                   ),
@@ -114,14 +115,16 @@ class _StateSelector extends StatelessWidget {
     return Wrap(
       spacing: 8,
       runSpacing: 8,
-      children: states.map((state) {
-        final isSelected = state.stateId == selectedStateId;
-        return ChoiceChip(
-          label: Text(state.label),
-          selected: isSelected,
-          onSelected: (_) => onStateChanged(state.stateId),
-        );
-      }).toList(growable: false),
+      children: states
+          .map((state) {
+            final isSelected = state.stateId == selectedStateId;
+            return ChoiceChip(
+              label: Text(state.label),
+              selected: isSelected,
+              onSelected: (_) => onStateChanged(state.stateId),
+            );
+          })
+          .toList(growable: false),
     );
   }
 }
@@ -154,8 +157,9 @@ class _CommandBundleList extends StatelessWidget {
           ),
           ...bundle.actions.take(2).map((action) {
             final alias = controllerAliases[action.controllerId];
-            final controllerLabel =
-                alias != null ? '${action.controllerId} ($alias)' : action.controllerId;
+            final controllerLabel = alias != null
+                ? '${action.controllerId} ($alias)'
+                : action.controllerId;
             final description = action.type == CommandActionType.channelValue
                 ? '通道 ${action.channel} → ${action.value}'
                 : '触发预设 ${action.presetId}';
@@ -185,7 +189,10 @@ class _CommandBundleList extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(bundle.label, style: Theme.of(context).textTheme.titleSmall),
+                    Text(
+                      bundle.label,
+                      style: Theme.of(context).textTheme.titleSmall,
+                    ),
                     const SizedBox(height: 4),
                     ...subtitle,
                   ],

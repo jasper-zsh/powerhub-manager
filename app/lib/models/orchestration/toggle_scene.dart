@@ -269,12 +269,16 @@ class ToggleScene {
     required this.name,
     List<ToggleState>? states,
     List<ConditionalRule>? rules,
+    Map<String, int>? switchSlots,
     DateTime? createdAt,
     DateTime? updatedAt,
     this.description,
     this.isPublished = false,
   }) : states = states ?? [],
        rules = rules ?? [],
+       switchSlots = Map<String, int>.unmodifiable(
+         switchSlots ?? const <String, int>{},
+       ),
        createdAt = createdAt ?? DateTime.now(),
        updatedAt = updatedAt ?? DateTime.now();
 
@@ -282,6 +286,7 @@ class ToggleScene {
   final String name;
   final List<ToggleState> states;
   final List<ConditionalRule> rules;
+  final Map<String, int> switchSlots;
   final DateTime createdAt;
   final DateTime updatedAt;
   final String? description;
@@ -300,6 +305,7 @@ class ToggleScene {
     String? name,
     List<ToggleState>? states,
     List<ConditionalRule>? rules,
+    Map<String, int>? switchSlots,
     DateTime? updatedAt,
     String? description,
     bool? isPublished,
@@ -309,6 +315,7 @@ class ToggleScene {
       name: name ?? this.name,
       states: states ?? List<ToggleState>.from(this.states),
       rules: rules ?? List<ConditionalRule>.from(this.rules),
+      switchSlots: switchSlots ?? Map<String, int>.from(this.switchSlots),
       createdAt: createdAt,
       updatedAt: updatedAt ?? DateTime.now(),
       description: description ?? this.description,
@@ -322,6 +329,7 @@ class ToggleScene {
       'name': name,
       'states': states.map((state) => state.toJson()).toList(),
       'rules': rules.map((rule) => rule.toJson()).toList(),
+      'switchSlots': switchSlots,
       'createdAt': createdAt.toIso8601String(),
       'updatedAt': updatedAt.toIso8601String(),
       'description': description,
@@ -332,6 +340,18 @@ class ToggleScene {
   factory ToggleScene.fromJson(Map<String, dynamic> json) {
     final statesJson = json['states'] as List<dynamic>? ?? <dynamic>[];
     final rulesJson = json['rules'] as List<dynamic>? ?? <dynamic>[];
+    final switchSlots = <String, int>{};
+    final rawSlots = json['switchSlots'];
+    if (rawSlots is Map) {
+      rawSlots.forEach((key, value) {
+        final slotValue = value is num
+            ? value.toInt()
+            : int.tryParse(value.toString());
+        if (slotValue != null && slotValue > 0) {
+          switchSlots[key.toString()] = slotValue;
+        }
+      });
+    }
     return ToggleScene(
       id: json['id'] as String,
       name: json['name'] as String,
@@ -348,6 +368,7 @@ class ToggleScene {
             ),
           )
           .toList(),
+      switchSlots: switchSlots,
       createdAt: DateTime.parse(json['createdAt'] as String),
       updatedAt: DateTime.parse(json['updatedAt'] as String),
       description: json['description'] as String?,
@@ -364,7 +385,19 @@ extension SwitchHubSceneAdapter on ToggleScene {
     }
 
     final switches = <SwitchHubSwitch>[];
-    var switchIndex = 1;
+    final usedSlots = <int>{};
+    var nextAutoSlot = 1;
+
+    int reserveAutoSlot() {
+      while (usedSlots.contains(nextAutoSlot)) {
+        nextAutoSlot++;
+      }
+      final slot = nextAutoSlot;
+      usedSlots.add(slot);
+      nextAutoSlot++;
+      return slot;
+    }
+
     grouped.forEach((toggleId, toggleStates) {
       final onState = _resolveState(toggleStates, suffix: 'on');
       final offState = _resolveState(toggleStates, suffix: 'off');
@@ -373,9 +406,13 @@ extension SwitchHubSceneAdapter on ToggleScene {
         onLabel: onState?.label,
         offLabel: offState?.label,
       );
+      final explicitSlot = switchSlots[toggleId];
+      final switchId = explicitSlot != null && explicitSlot > 0
+          ? (usedSlots.add(explicitSlot) ? explicitSlot : reserveAutoSlot())
+          : reserveAutoSlot();
       switches.add(
         SwitchHubSwitch(
-          switchId: switchIndex++,
+          switchId: switchId,
           revision: updatedAt.millisecondsSinceEpoch & 0xFFFF,
           onLogic: (onState ?? toggleStates.first).resolvedLogic,
           offLogic: (offState ?? toggleStates.first).resolvedLogic,
@@ -417,7 +454,9 @@ SwitchHubLogicNode _logicFromCommandBundles(List<CommandBundle> bundles) {
 List<SwitchHubSequenceItem> _sequenceFromBundle(CommandBundle bundle) {
   final grouped = <String, List<CommandAction>>{};
   for (final action in bundle.actions) {
-    grouped.putIfAbsent(action.controllerId, () => <CommandAction>[]).add(action);
+    grouped
+        .putIfAbsent(action.controllerId, () => <CommandAction>[])
+        .add(action);
   }
   final items = <SwitchHubSequenceItem>[];
   grouped.forEach((controllerId, actions) {
@@ -441,10 +480,7 @@ List<SwitchHubSequenceItem> _sequenceFromBundle(CommandBundle bundle) {
     }
     if (packets.isNotEmpty) {
       items.add(
-        SwitchHubSequenceItem(
-          targetMac: controllerId,
-          commandPackets: packets,
-        ),
+        SwitchHubSequenceItem(targetMac: controllerId, commandPackets: packets),
       );
     }
   });
