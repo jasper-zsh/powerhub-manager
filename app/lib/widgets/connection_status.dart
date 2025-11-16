@@ -1,110 +1,147 @@
+import 'package:app/controllers/connection_session_controller.dart';
+import 'package:app/controllers/monitoring_controller.dart';
 import 'package:app/models/connection_status_record.dart';
 import 'package:app/models/saved_controller.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:provider/provider.dart';
+
 import 'package:app/providers/app_state_provider.dart';
 
-class ConnectionStatus extends StatelessWidget {
+class ConnectionStatus extends ConsumerWidget {
+  const ConnectionStatus({super.key});
+
   @override
-  Widget build(BuildContext context) {
-    return Consumer<AppStateProvider>(
-      builder: (context, appState, child) {
-        return Container(
-          color: _resolveBackgroundColor(appState),
-          padding: const EdgeInsets.all(16.0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.center,
+  Widget build(BuildContext context, WidgetRef ref) {
+    final appState = context.watch<AppStateProvider>();
+    final session = ref.watch(connectionSessionControllerProvider);
+    final telemetryState = ref.watch(monitoringControllerProvider);
+
+    final telemetryData = telemetryState.value ?? appState.telemetry;
+    final telemetryError = telemetryState.when<String?>(
+      data: (_) => appState.telemetryError.isNotEmpty
+          ? appState.telemetryError
+          : null,
+      loading: () => null,
+      error: (error, _) => error.toString(),
+    );
+
+    final bool isConnected =
+        session.isConnected || appState.selectedDevice?.isConnected == true;
+    final statusText = _statusLabel(
+      session,
+      appState.selectedDevice?.name,
+      appState.isConnected,
+    );
+
+    return Container(
+      color: _resolveBackgroundColor(appState, session, isConnected),
+      padding: const EdgeInsets.all(16.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(
-                    appState.selectedDevice?.isConnected ?? false
-                        ? Icons.bluetooth_connected
-                        : Icons.bluetooth_disabled,
-                    color: appState.selectedDevice?.isConnected ?? false
-                        ? Colors.green
-                        : Colors.red,
-                  ),
-                  const SizedBox(width: 10),
-                  Text(
-                    appState.selectedDevice?.isConnected ?? false
-                        ? 'Connected to ${appState.selectedDevice?.name ?? "device"}'
-                        : 'Not connected',
-                    style: TextStyle(
-                      color: appState.selectedDevice?.isConnected ?? false
-                          ? Colors.green
-                          : Colors.red,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ],
+              Icon(
+                isConnected
+                    ? Icons.bluetooth_connected
+                    : Icons.bluetooth_disabled,
+                color: isConnected ? Colors.green : Colors.red,
               ),
-              if (appState.telemetry != null) ...[
-                const SizedBox(height: 8),
-                Wrap(
-                  alignment: WrapAlignment.center,
-                  spacing: 16,
-                  runSpacing: 4,
-                  children: [
-                    _TelemetryChip(
-                      label: 'Vin',
-                      value:
-                          '${(appState.telemetry!.vinMillivolts / 1000.0).toStringAsFixed(2)} V',
-                    ),
-                    _TelemetryChip(
-                      label: '温度',
-                      value:
-                          '${appState.telemetry!.temperatureCelsius.toStringAsFixed(2)} °C',
-                    ),
-                    _TelemetryChip(
-                      label: '高温阈值',
-                      value:
-                          '${appState.telemetry!.highThresholdCelsius.toStringAsFixed(2)} °C',
-                    ),
-                    _TelemetryChip(
-                      label: '恢复阈值',
-                      value:
-                          '${appState.telemetry!.recoverThresholdCelsius.toStringAsFixed(2)} °C',
-                    ),
-                    _TelemetryChip(
-                      label: '睡眠阈值',
-                      value:
-                          '${appState.telemetry!.sleepThresholdVolts.toStringAsFixed(2)} V',
-                    ),
-                    _TelemetryChip(
-                      label: '唤醒阈值',
-                      value:
-                          '${appState.telemetry!.wakeThresholdVolts.toStringAsFixed(2)} V',
-                    ),
-                    if (appState.isThermalProtectionActive)
-                      const _TelemetryChip(
-                        label: '状态',
-                        value: '热保护激活',
-                        emphasize: true,
-                      ),
-                  ],
+              const SizedBox(width: 10),
+              Text(
+                statusText,
+                style: TextStyle(
+                  color: isConnected ? Colors.green : Colors.red,
+                  fontWeight: FontWeight.bold,
                 ),
-              ] else if (appState.telemetryError.isNotEmpty) ...[
-                const SizedBox(height: 8),
-                Text(
-                  appState.telemetryError,
-                  style: const TextStyle(color: Colors.redAccent, fontSize: 12),
-                  textAlign: TextAlign.center,
-                ),
-              ],
-              if (appState.savedControllers.isNotEmpty) ...[
-                const SizedBox(height: 12),
-                _SavedControllersSummary(appState: appState),
-              ],
+              ),
             ],
           ),
-        );
-      },
+          if (telemetryData != null) ...[
+            const SizedBox(height: 8),
+            Wrap(
+              alignment: WrapAlignment.center,
+              spacing: 16,
+              runSpacing: 4,
+              children: [
+                _TelemetryChip(
+                  label: 'Vin',
+                  value:
+                      '${(telemetryData.vinMillivolts / 1000.0).toStringAsFixed(2)} V',
+                ),
+                _TelemetryChip(
+                  label: '温度',
+                  value:
+                      '${telemetryData.temperatureCelsius.toStringAsFixed(2)} °C',
+                ),
+                _TelemetryChip(
+                  label: '高温阈值',
+                  value:
+                      '${telemetryData.highThresholdCelsius.toStringAsFixed(2)} °C',
+                ),
+                _TelemetryChip(
+                  label: '恢复阈值',
+                  value:
+                      '${telemetryData.recoverThresholdCelsius.toStringAsFixed(2)} °C',
+                ),
+                _TelemetryChip(
+                  label: '睡眠阈值',
+                  value:
+                      '${telemetryData.sleepThresholdVolts.toStringAsFixed(2)} V',
+                ),
+                _TelemetryChip(
+                  label: '唤醒阈值',
+                  value:
+                      '${telemetryData.wakeThresholdVolts.toStringAsFixed(2)} V',
+                ),
+                if (appState.isThermalProtectionActive)
+                  const _TelemetryChip(
+                    label: '状态',
+                    value: '热保护激活',
+                    emphasize: true,
+                  ),
+              ],
+            ),
+          ] else if (telemetryError?.isNotEmpty ?? false) ...[
+            const SizedBox(height: 8),
+            Text(
+              telemetryError!,
+              style: const TextStyle(color: Colors.redAccent, fontSize: 12),
+              textAlign: TextAlign.center,
+            ),
+          ],
+          if (appState.savedControllers.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            _SavedControllersSummary(appState: appState),
+          ],
+        ],
+      ),
     );
   }
 
-  Color? _resolveBackgroundColor(AppStateProvider appState) {
+  String _statusLabel(
+    ConnectionSessionState session,
+    String? deviceName,
+    bool appStateConnected,
+  ) {
+    final name = deviceName ?? 'device';
+    return switch (session.lifecycle) {
+      ConnectionLifecycle.connected => 'Connected to $name',
+      ConnectionLifecycle.degraded => 'Connection degraded ($name)',
+      ConnectionLifecycle.connecting => 'Connecting to $name…',
+      ConnectionLifecycle.error => 'Connection error',
+      ConnectionLifecycle.disconnected =>
+          appStateConnected ? 'Connected to $name' : 'Not connected',
+    };
+  }
+
+  Color? _resolveBackgroundColor(
+    AppStateProvider appState,
+    ConnectionSessionState session,
+    bool resolvedConnection,
+  ) {
     final hasActiveConnections = appState.connectionStatusRecords.any(
       (record) =>
           record.controller.connectionStatus ==
@@ -120,7 +157,7 @@ class ConnectionStatus extends StatelessWidget {
       return Colors.orange[100];
     }
 
-    if (hasActiveConnections || (appState.selectedDevice?.isConnected ?? false)) {
+    if (hasActiveConnections || resolvedConnection) {
       return Colors.green[100];
     }
 
@@ -238,13 +275,14 @@ class _StatusChip extends StatelessWidget {
       backgroundColor: color.withOpacity(0.15),
       label: RichText(
         text: TextSpan(
-          style: TextStyle(color: color, fontSize: 12),
+          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: color.darken(),
+                fontWeight: FontWeight.w600,
+              ) ??
+              TextStyle(color: color.darken()),
           children: [
-            TextSpan(
-              text: '$label: ',
-              style: const TextStyle(fontWeight: FontWeight.bold),
-            ),
-            TextSpan(text: value),
+            TextSpan(text: '$label '),
+            TextSpan(text: value, style: const TextStyle(fontWeight: FontWeight.bold)),
           ],
         ),
       ),
@@ -253,43 +291,34 @@ class _StatusChip extends StatelessWidget {
 }
 
 class _TelemetryChip extends StatelessWidget {
+  const _TelemetryChip({
+    required this.label,
+    required this.value,
+    this.emphasize = false,
+  });
+
   final String label;
   final String value;
   final bool emphasize;
 
-  const _TelemetryChip({
-    Key? key,
-    required this.label,
-    required this.value,
-    this.emphasize = false,
-  }) : super(key: key);
-
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final backgroundColor = emphasize
-        ? colorScheme.error.withOpacity(0.1)
-        : colorScheme.primary.withOpacity(0.05);
-    final textColor = emphasize ? colorScheme.error : colorScheme.primary;
+    final color = emphasize ? Colors.orange : Colors.blueGrey;
+    return Chip(
+      backgroundColor: color.withOpacity(0.1),
+      label: Text('$label $value', style: TextStyle(color: color)),
+    );
+  }
+}
 
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      decoration: BoxDecoration(
-        color: backgroundColor,
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: RichText(
-        text: TextSpan(
-          style: TextStyle(color: textColor, fontSize: 12),
-          children: [
-            TextSpan(
-              text: '$label: ',
-              style: const TextStyle(fontWeight: FontWeight.bold),
-            ),
-            TextSpan(text: value),
-          ],
-        ),
-      ),
+extension _ColorBrightness on Color {
+  Color darken([double amount = .2]) {
+    final factor = 1 - amount;
+    return Color.fromARGB(
+      alpha,
+      (red * factor).round(),
+      (green * factor).round(),
+      (blue * factor).round(),
     );
   }
 }

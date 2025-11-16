@@ -1,82 +1,113 @@
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
-import 'package:app/providers/app_state_provider.dart';
-import 'package:app/screens/channel_control_screen.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import 'package:app/models/pwm_controller.dart';
 import 'package:app/models/saved_controller.dart';
+import 'package:app/screens/channel_control_screen.dart';
 import 'package:app/screens/telemetry_settings_screen.dart';
 import 'package:app/widgets/connection_status.dart';
 import 'package:app/widgets/saved_controller_list.dart';
+import 'package:app/controllers/discovery_controller.dart';
+import 'package:app/controllers/saved_controller_controller.dart';
+import 'package:app/controllers/connection_session_controller.dart';
+import 'package:app/controllers/device_control_controller.dart';
 
-class HomeScreen extends StatelessWidget {
+class HomeScreen extends ConsumerWidget {
   const HomeScreen({Key? key}) : super(key: key);
 
   @override
-  Widget build(BuildContext context) {
-    return Consumer<AppStateProvider>(
-      builder: (context, appState, child) {
-        return Scaffold(
-          appBar: AppBar(
-            actions: [
-              IconButton(
-                icon: const Icon(Icons.refresh),
-                onPressed: appState.isScanning
-                    ? null
-                    : () => appState.scanForDevices(),
-              ),
-              IconButton(
-                icon: const Icon(Icons.settings),
-                onPressed: appState.isConnected
-                    ? () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) =>
-                                const TelemetrySettingsScreen(),
-                          ),
-                        );
-                      }
-                    : null,
-              ),
-            ],
+  Widget build(BuildContext context, WidgetRef ref) {
+    final discoveryState = ref.watch(discoveryControllerProvider);
+    final savedControllersState = ref.watch(savedControllerControllerProvider);
+    final connectionState = ref.watch(connectionSessionControllerProvider);
+    final deviceControlState = ref.watch(deviceControlControllerProvider);
+    
+    // 检查是否有已连接的设备
+    final isConnected = connectionState.isConnected;
+    final selectedDevice = connectionState.controllerId != null && isConnected
+        ? PWMController(
+            id: connectionState.controllerId!,
+            name: 'Connected Device',
+            rssi: 0,
+            channels: deviceControlState.channels,
+          )
+        : null;
+
+    return Scaffold(
+      appBar: AppBar(
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: discoveryState.isScanning
+                ? null
+                : () => ref
+                    .read(discoveryControllerProvider.notifier)
+                    .startScan(),
           ),
-          body: Column(
-            children: [
-              // Connection status
-              ConnectionStatus(),
-
-              // Device selection or connection button
-              if (appState.selectedDevice == null)
-                _buildDeviceSelectionSection(context, appState)
-              else
-                _buildConnectedDeviceSection(context, appState),
-
-              Expanded(
-                child: Column(
-                  children: [
-                    Expanded(
-                      child: _buildSavedControllersSection(
-                        context,
-                        appState,
+          IconButton(
+            icon: const Icon(Icons.settings),
+            onPressed: isConnected
+                ? () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const TelemetrySettingsScreen(),
                       ),
-                    ),
-                    _buildNavigationSection(context, appState),
-                  ],
-                ),
-              ),
-            ],
+                    );
+                  }
+                : null,
           ),
-        );
-      },
+        ],
+      ),
+      body: Column(
+        children: [
+          // Connection status
+          const ConnectionStatus(),
+
+          // Device selection or connection button
+          if (selectedDevice == null)
+            _buildDeviceSelectionSection(
+              context,
+              ref,
+              discoveryState,
+            )
+          else
+            _buildConnectedDeviceSection(
+              context,
+              ref,
+              selectedDevice,
+              savedControllersState.controllers,
+            ),
+
+          Expanded(
+            child: Column(
+              children: [
+                Expanded(
+                  child: _buildSavedControllersSection(
+                    context,
+                    ref,
+                    savedControllersState.controllers,
+                  ),
+                ),
+                _buildNavigationSection(context, isConnected),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 
   Widget _buildDeviceSelectionSection(
     BuildContext context,
-    AppStateProvider appState,
+    WidgetRef ref,
+    DiscoveryState discoveryState,
   ) {
     debugPrint(
-      'Building device selection section. Discovered devices: ${appState.discoveredDevices.length}',
+      'Building device selection section. Discovered devices: ${discoveryState.devices.length}',
     );
+
+    final devices = discoveryState.devices;
 
     return Column(
       children: [
@@ -87,15 +118,15 @@ class HomeScreen extends StatelessWidget {
             style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
           ),
         ),
-        if (appState.errorMessage.isNotEmpty)
+        if (discoveryState.hasError)
           Padding(
             padding: const EdgeInsets.all(16.0),
             child: Text(
-              appState.errorMessage,
+              'Scan error: ${discoveryState.error}',
               style: const TextStyle(color: Colors.red),
             ),
           ),
-        if (appState.isScanning)
+        if (discoveryState.isScanning)
           const Padding(
             padding: EdgeInsets.all(16.0),
             child: CircularProgressIndicator(),
@@ -106,18 +137,18 @@ class HomeScreen extends StatelessWidget {
             child: ElevatedButton(
               onPressed: () {
                 debugPrint('Scan button pressed');
-                appState.scanForDevices();
+                ref.read(discoveryControllerProvider.notifier).startScan();
               },
               child: const Text('Scan for Devices'),
             ),
           ),
-        if (appState.discoveredDevices.isNotEmpty)
+        if (devices.isNotEmpty)
           SizedBox(
             height: 200,
             child: ListView.builder(
-              itemCount: appState.discoveredDevices.length,
+              itemCount: devices.length,
               itemBuilder: (context, index) {
-                final device = appState.discoveredDevices[index];
+                final device = devices[index];
                 debugPrint('Displaying device: ${device.name} (${device.id})');
                 return ListTile(
                   title: Text(device.name),
@@ -126,13 +157,14 @@ class HomeScreen extends StatelessWidget {
                     debugPrint(
                       'User tapped on device: ${device.name} (${device.id})',
                     );
-                    appState.connectToDevice(device.id);
+                    ref.read(connectionSessionControllerProvider.notifier)
+                        .connect(device.id);
                   },
                 );
               },
             ),
           )
-        else if (!appState.isScanning)
+        else if (!discoveryState.isScanning)
           const Padding(
             padding: EdgeInsets.all(16.0),
             child: Text('No devices found. Tap "Scan for Devices" to search.'),
@@ -143,13 +175,9 @@ class HomeScreen extends StatelessWidget {
 
   Widget _buildSavedControllersSection(
     BuildContext context,
-    AppStateProvider appState,
+    WidgetRef ref,
+    List<SavedController> controllers,
   ) {
-    final statusRecords = {
-      for (final record in appState.connectionStatusRecords)
-        record.controller.controllerId: record,
-    };
-
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
       child: Card(
@@ -164,22 +192,21 @@ class HomeScreen extends StatelessWidget {
             const Divider(height: 1),
             Expanded(
               child: SavedControllerList(
-                controllers: appState.savedControllers,
+                controllers: controllers,
                 emptyState: const Padding(
                   padding: EdgeInsets.all(16.0),
                   child: Text(
                     'No saved controllers yet. Save a device to reuse it later.',
                   ),
                 ),
-                statusRecords: statusRecords,
                 onRename: (controller) => _promptRenameSavedController(
                   context,
-                  appState,
+                  ref,
                   controller,
                 ),
                 onRemove: (controller) => _confirmRemoveSavedController(
                   context,
-                  appState,
+                  ref,
                   controller,
                 ),
               ),
@@ -192,7 +219,7 @@ class HomeScreen extends StatelessWidget {
 
   Widget _buildNavigationSection(
     BuildContext context,
-    AppStateProvider appState,
+    bool isConnected,
   ) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 24.0),
@@ -202,7 +229,7 @@ class HomeScreen extends StatelessWidget {
           SizedBox(
             width: 200,
             child: ElevatedButton(
-              onPressed: appState.selectedDevice != null
+              onPressed: isConnected
                   ? () {
                       Navigator.push(
                         context,
@@ -215,20 +242,74 @@ class HomeScreen extends StatelessWidget {
               child: const Text('Channel Control'),
             ),
           ),
-                  ],
+        ],
       ),
+    );
+  }
+
+  Widget _buildConnectedDeviceSection(
+    BuildContext context,
+    WidgetRef ref,
+    PWMController selectedDevice,
+    List<SavedController> savedControllers,
+  ) {
+    final isAlreadySaved = savedControllers.any(
+      (saved) => saved.controllerId == selectedDevice.id,
+    );
+
+    return Column(
+      children: [
+        const Padding(
+          padding: EdgeInsets.all(16.0),
+          child: Text(
+            'Connected Device',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text(
+                selectedDevice.name,
+                style: const TextStyle(fontSize: 16),
+              ),
+              const SizedBox(width: 10),
+              ElevatedButton(
+                onPressed: () {
+                  debugPrint('Disconnect button pressed');
+                  ref.read(connectionSessionControllerProvider.notifier).disconnect();
+                },
+                child: const Text('Disconnect'),
+              ),
+            ],
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16.0),
+          child: SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: isAlreadySaved
+                  ? null
+                  : () => _promptSaveController(context, ref, selectedDevice),
+              icon: const Icon(Icons.save_alt),
+              label: Text(
+                isAlreadySaved ? 'Device Saved' : 'Save Device',
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 
   Future<void> _promptSaveController(
     BuildContext context,
-    AppStateProvider appState,
+    WidgetRef ref,
+    PWMController pwm,
   ) async {
-    final pwm = appState.selectedDevice;
-    if (pwm == null) {
-      return;
-    }
-
     final aliasController = TextEditingController(text: pwm.name);
 
     final alias = await showDialog<String>(
@@ -267,10 +348,9 @@ class HomeScreen extends StatelessWidget {
     }
 
     try {
-      await appState.saveController(
-        controllerId: pwm.id,
-        alias: alias,
-      );
+      await ref
+          .read(savedControllerControllerProvider.notifier)
+          .createController(controllerId: pwm.id, alias: alias);
 
       if (!context.mounted) {
         return;
@@ -304,7 +384,7 @@ class HomeScreen extends StatelessWidget {
 
   Future<void> _promptRenameSavedController(
     BuildContext context,
-    AppStateProvider appState,
+    WidgetRef ref,
     SavedController controller,
   ) async {
     final aliasController = TextEditingController(text: controller.alias);
@@ -345,7 +425,9 @@ class HomeScreen extends StatelessWidget {
     }
 
     try {
-      await appState.renameSavedController(controller.controllerId, alias);
+      await ref
+          .read(savedControllerControllerProvider.notifier)
+          .renameController(controller.controllerId, alias);
 
       if (!context.mounted) {
         return;
@@ -379,7 +461,7 @@ class HomeScreen extends StatelessWidget {
 
   Future<void> _confirmRemoveSavedController(
     BuildContext context,
-    AppStateProvider appState,
+    WidgetRef ref,
     SavedController controller,
   ) async {
     final shouldRemove = await showDialog<bool>(
@@ -409,7 +491,9 @@ class HomeScreen extends StatelessWidget {
     }
 
     try {
-      await appState.removeSavedController(controller.controllerId);
+      await ref
+          .read(savedControllerControllerProvider.notifier)
+          .removeController(controller.controllerId);
 
       if (!context.mounted) {
         return;
@@ -429,69 +513,5 @@ class HomeScreen extends StatelessWidget {
         SnackBar(content: Text('Failed to remove controller: $error')),
       );
     }
-  }
-
-  Widget _buildConnectedDeviceSection(
-    BuildContext context,
-    AppStateProvider appState,
-  ) {
-    final isAlreadySaved = appState.savedControllers.any(
-      (saved) => saved.controllerId == appState.selectedDevice?.id,
-    );
-
-    return Column(
-      children: [
-        const Padding(
-          padding: EdgeInsets.all(16.0),
-          child: Text(
-            'Connected Device',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-          ),
-        ),
-        Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Text(
-                appState.selectedDevice!.name,
-                style: const TextStyle(fontSize: 16),
-              ),
-              const SizedBox(width: 10),
-              ElevatedButton(
-                onPressed: () {
-                  debugPrint('Disconnect button pressed');
-                  appState.disconnectFromDevice();
-                },
-                child: const Text('Disconnect'),
-              ),
-            ],
-          ),
-        ),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16.0),
-          child: SizedBox(
-            width: double.infinity,
-            child: ElevatedButton.icon(
-              onPressed: isAlreadySaved
-                  ? null
-                  : () => _promptSaveController(context, appState),
-              icon: const Icon(Icons.save_alt),
-              label: Text(
-                isAlreadySaved ? 'Device Saved' : 'Save Device',
-              ),
-            ),
-          ),
-        ),
-        if (appState.errorMessage.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: Text(
-              appState.errorMessage,
-              style: const TextStyle(color: Colors.red),
-            ),
-          ),
-      ],
-    );
   }
 }

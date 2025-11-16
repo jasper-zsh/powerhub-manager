@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:app/models/pwm_controller.dart';
 import 'package:app/services/ble_service.dart';
-import 'package:app/services/storage_service.dart';
 import 'package:app/services/reconnect_manager.dart';
 import 'package:app/models/control_command/set_command.dart';
 import 'package:app/models/control_command/fade_command.dart';
@@ -14,18 +13,29 @@ import 'package:app/models/power_management.dart';
 import 'package:app/models/monitoring_data.dart';
 import 'package:app/models/saved_controller.dart';
 import 'package:app/models/connection_status_record.dart';
+import 'package:app/repositories/saved_controller_repository.dart';
+import 'package:app/repositories/device_repository.dart';
+import 'package:app/services/storage_service.dart';
 
 class AppStateProvider with ChangeNotifier {
   AppStateProvider({
     BLEService? bleService,
     StorageService? storageService,
     ReconnectConfig? reconnectConfig,
+    DeviceRepository? deviceRepository,
+    SavedControllerRepository? savedControllerRepository,
   })  : _bleService = bleService ?? BLEService(),
-        _storageService = storageService ?? StorageService(),
+        _deviceRepository =
+            deviceRepository ?? BleDeviceRepository(bleService: bleService),
+        _ownsDeviceRepository = deviceRepository == null,
+        _savedControllerRepository = savedControllerRepository ??
+            SavedControllerRepository(storageService: storageService),
         _reconnectConfig = reconnectConfig ?? const ReconnectConfig();
 
   final BLEService _bleService;
-  final StorageService _storageService;
+  final DeviceRepository _deviceRepository;
+  final bool _ownsDeviceRepository;
+  final SavedControllerRepository _savedControllerRepository;
   final ReconnectConfig _reconnectConfig;
   ReconnectManager? _reconnectManager;
 
@@ -38,6 +48,7 @@ class AppStateProvider with ChangeNotifier {
   TelemetryData? _telemetry;
   String _telemetryError = '';
   StreamSubscription<TelemetryData>? _telemetrySubscription;
+  StreamSubscription<List<SavedController>>? _savedControllersSubscription;
 
   // 监控数据
   MonitoringData? _monitoringData;
@@ -201,7 +212,7 @@ class AppStateProvider with ChangeNotifier {
     // 移除重复检查，直接使用BLE服务的健康状态检查
 
     // 使用BLE服务的健康连接状态
-    final bleServiceHealth = _bleService.getConnectionHealthInfo();
+    final bleServiceHealth = _deviceRepository.connectionHealth;
     if (!bleServiceHealth['healthy']) return false;
 
     // 检查最近是否有成功操作
@@ -280,15 +291,29 @@ class AppStateProvider with ChangeNotifier {
   // Initialize the provider
   Future<void> init() async {
     debugPrint('AppStateProvider: Initializing...');
-    await _storageService.init();
+    await _savedControllerRepository.ensureInitialized();
+    _savedControllersSubscription?.cancel();
+    _savedControllersSubscription =
+        _savedControllerRepository.controllersStream.listen(
+      _handleSavedControllerSnapshot,
+    );
+    _handleSavedControllerSnapshot(
+      _savedControllerRepository.currentControllers,
+    );
     await loadSavedControllers();
     debugPrint('AppStateProvider: Initialization completed');
   }
 
+  void _handleSavedControllerSnapshot(List<SavedController> controllers) {
+    _savedControllers = List<SavedController>.from(controllers);
+    _syncConnectionRecords();
+    notifyListeners();
+  }
+
   Future<void> loadSavedControllers() async {
     debugPrint('AppStateProvider: Loading saved controllers from storage');
-    final rawControllers = await _storageService.loadSavedControllers();
-    _savedControllers = rawControllers
+    final rawControllers = await _savedControllerRepository.loadSavedControllers();
+    final normalizedControllers = rawControllers
         .map(
           (controller) => controller.copyWith(
             connectionStatus: SavedControllerConnectionStatus.disconnected,
@@ -299,10 +324,9 @@ class AppStateProvider with ChangeNotifier {
           ),
         )
         .toList();
-    _connectionStatusRecords = [];
-    _syncConnectionRecords();
-    await _storageService.persistSavedControllers(_savedControllers);
-    notifyListeners();
+    await _savedControllerRepository.persistSavedControllers(
+      normalizedControllers,
+    );
   }
 
   Future<SavedController> saveController({
@@ -319,12 +343,11 @@ class AppStateProvider with ChangeNotifier {
         notes: notes,
       );
 
-      final persisted = await _storageService.addSavedController(
+      final persisted = await _savedControllerRepository.addSavedController(
         savedController,
       );
 
       _errorMessage = '';
-      _upsertSavedController(persisted);
       notifyListeners();
       return persisted;
     } on ArgumentError catch (error) {
@@ -337,19 +360,6 @@ class AppStateProvider with ChangeNotifier {
       notifyListeners();
       rethrow;
     }
-  }
-
-  void _upsertSavedController(SavedController controller) {
-    final existingIndex = _savedControllers.indexWhere(
-      (item) => item.controllerId == controller.controllerId,
-    );
-
-    if (existingIndex >= 0) {
-      _savedControllers[existingIndex] = controller;
-    } else {
-      _savedControllers = List.of(_savedControllers)..add(controller);
-    }
-    _syncConnectionRecords();
   }
 
   void _syncConnectionRecords() {
@@ -413,7 +423,9 @@ class AppStateProvider with ChangeNotifier {
     debugPrint(
       'AppStateProvider: Updated $controllerId status -> ${updated.connectionStatus}',
     );
-    unawaited(_storageService.persistSavedControllers(_savedControllers));
+    unawaited(
+      _savedControllerRepository.persistSavedControllers(_savedControllers),
+    );
     notifyListeners();
   }
 
@@ -466,17 +478,10 @@ class AppStateProvider with ChangeNotifier {
     String alias,
   ) async {
     try {
-      final updated = await _storageService.renameSavedController(
+      final updated = await _savedControllerRepository.renameSavedController(
         controllerId,
         alias,
       );
-
-      _savedControllers = _savedControllers
-          .map((controller) => controller.controllerId == controllerId
-              ? updated
-              : controller)
-          .toList();
-      _syncConnectionRecords();
       _errorMessage = '';
       notifyListeners();
       return updated;
@@ -493,12 +498,9 @@ class AppStateProvider with ChangeNotifier {
 
   Future<void> removeSavedController(String controllerId) async {
     try {
-      final updatedControllers = await _storageService.removeSavedController(
+      await _savedControllerRepository.removeSavedController(
         controllerId,
       );
-
-      _savedControllers = updatedControllers;
-      _syncConnectionRecords();
       _errorMessage = '';
       notifyListeners();
     } on ArgumentError catch (error) {
@@ -526,7 +528,7 @@ class AppStateProvider with ChangeNotifier {
     controllers.insert(newIndex, item);
     _savedControllers = controllers;
     _syncConnectionRecords();
-    await _storageService.persistSavedControllers(_savedControllers);
+    await _savedControllerRepository.persistSavedControllers(_savedControllers);
     notifyListeners();
   }
 
@@ -591,7 +593,7 @@ class AppStateProvider with ChangeNotifier {
 
     if (attemptIds.isNotEmpty) {
       try {
-        availableIds = await _bleService.scanForControllerIds(
+        availableIds = await _deviceRepository.scanForControllerIds(
           attemptIds,
         );
         if (availableIds.isNotEmpty) {
@@ -623,7 +625,7 @@ class AppStateProvider with ChangeNotifier {
           );
         } else {
           try {
-            await _bleService.connect(controllerId);
+            await _deviceRepository.connect(controllerId);
             controller = controller.touchConnectedAt(now);
             record = record.copyWith(
               controller: controller,
@@ -701,7 +703,7 @@ class AppStateProvider with ChangeNotifier {
         )
         .toList();
 
-    await _storageService.persistSavedControllers(_savedControllers);
+    await _savedControllerRepository.persistSavedControllers(_savedControllers);
     notifyListeners();
   }
 
@@ -722,6 +724,13 @@ class AppStateProvider with ChangeNotifier {
     debugPrint('AppStateProvider: Stopped enhanced auto reconnect loop');
   }
 
+  @override
+  void dispose() {
+    _savedControllersSubscription?.cancel();
+    _savedControllersSubscription = null;
+    super.dispose();
+  }
+
   
   // Scan for devices
   Future<void> scanForDevices({int timeout = 10}) async {
@@ -731,7 +740,9 @@ class AppStateProvider with ChangeNotifier {
     notifyListeners();
 
     try {
-      _discoveredDevices = await _bleService.scanForDevices(timeout: timeout);
+      _discoveredDevices = await _deviceRepository.scanForDevices(
+        timeout: Duration(seconds: timeout),
+      );
       debugPrint(
         'AppStateProvider: Scan completed. Found ${_discoveredDevices.length} devices.',
       );
@@ -762,7 +773,7 @@ class AppStateProvider with ChangeNotifier {
     try {
       markControllerConnecting(deviceId);
 
-      await _bleService.connect(deviceId);
+      await _deviceRepository.connect(deviceId);
 
       PWMController? device = _discoveredDevices.firstWhere(
         (d) => d.id == deviceId,
@@ -845,7 +856,7 @@ class AppStateProvider with ChangeNotifier {
 
     try {
       final controllerId = _selectedDevice?.id;
-      await _bleService.disconnect();
+      await _deviceRepository.disconnect();
       if (_telemetrySubscription != null) {
         await _telemetrySubscription!.cancel();
         _telemetrySubscription = null;
@@ -881,7 +892,7 @@ class AppStateProvider with ChangeNotifier {
     notifyListeners();
 
     try {
-      List<int> states = await _bleService.readChannelStates();
+      List<int> states = await _deviceRepository.readChannelStates();
       debugPrint('AppStateProvider: Read channel states: $states');
 
       for (
@@ -1211,7 +1222,7 @@ class AppStateProvider with ChangeNotifier {
       debugPrint(
         'AppStateProvider: Sending SetCommand to channel $channelId with value $value',
       );
-      await _bleService.sendSetCommand(
+      await _deviceRepository.sendSetCommand(
         SetCommand(channel: channelId, value: value),
       );
       debugPrint(
@@ -1247,7 +1258,7 @@ class AppStateProvider with ChangeNotifier {
     notifyListeners();
 
     try {
-      await _bleService.sendFadeCommand(
+      await _deviceRepository.sendFadeCommand(
         FadeCommand(
           channel: channelId,
           targetValue: targetValue,
@@ -1287,7 +1298,7 @@ class AppStateProvider with ChangeNotifier {
     notifyListeners();
 
     try {
-      await _bleService.sendBlinkCommand(
+      await _deviceRepository.sendBlinkCommand(
         BlinkCommand(channel: channelId, period: period),
       );
 
@@ -1321,7 +1332,7 @@ class AppStateProvider with ChangeNotifier {
     notifyListeners();
 
     try {
-      await _bleService.sendStrobeCommand(
+      await _deviceRepository.sendStrobeCommand(
         StrobeCommand(
           channel: channelId,
           flashCount: flashCount,
@@ -1346,7 +1357,12 @@ class AppStateProvider with ChangeNotifier {
     _stopConnectionStatusMonitoring();
     _reconnectManager?.dispose();
     _telemetrySubscription?.cancel();
+    _savedControllersSubscription?.cancel();
+    _savedControllersSubscription = null;
     Future.microtask(() => _bleService.disableTelemetryNotifications());
+    if (_ownsDeviceRepository && _deviceRepository is BleDeviceRepository) {
+      (_deviceRepository as BleDeviceRepository).dispose();
+    }
     super.dispose();
   }
 }

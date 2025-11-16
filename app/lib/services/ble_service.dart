@@ -34,7 +34,6 @@ class BLEService {
       '0000fff5-0000-1000-8000-00805f9b34fb';
   static const String monitoringUuid =
       '0000fff6-0000-1000-8000-00805f9b34fb';
-  static const String telemetryUuid = '0000fff5-0000-1000-8000-00805f9b34fb';
 
   // Legacy constants for backward compatibility
   static const String SERVICE_UUID = serviceUuid;
@@ -42,7 +41,7 @@ class BLEService {
   static const String CONTROL_COMMANDS_UUID = controlCommandsUuid;
   static const String POWER_MANAGEMENT_UUID = powerManagementUuid;
   static const String MONITORING_UUID = monitoringUuid;
-  static const String TELEMETRY_UUID = telemetryUuid;
+  // Note: TELEMETRY_UUID is deprecated - use MONITORING_UUID instead
 
   BluetoothDevice? _connectedDevice;
   BluetoothService? _service;
@@ -546,12 +545,12 @@ class BLEService {
     }
   }
 
-  Future<TelemetryData> readTelemetrySnapshot() async {
+  Future<MonitoringData> readTelemetrySnapshot() async {
     if (_connectedDevice == null || !_connectedDevice!.isConnected) {
       throw Exception('NOT_CONNECTED');
     }
 
-    final characteristic = _findCharacteristic(TELEMETRY_UUID);
+    final characteristic = _findCharacteristic(MONITORING_UUID);
 
     if (characteristic == null) {
       throw Exception('CHARACTERISTIC_NOT_FOUND');
@@ -560,28 +559,19 @@ class BLEService {
     try {
       final value = await characteristic.read();
 
-      debugPrint('Telemetry read raw data length: ${value.length}, bytes: $value');
+      debugPrint('Monitoring read raw data length: ${value.length}, bytes: $value');
 
-      // Only support new 8-byte power management format
-      if (value.length != 8) {
-        throw Exception('INVALID_DATA: Expected 8 bytes, got ${value.length}');
+      // Monitor data should be 36 bytes according to protocol
+      if (value.length != 36) {
+        debugPrint('Warning: Expected 36 bytes for monitoring data, got ${value.length}');
+        // Don't throw error, try to parse anyway
       }
 
-      // Parse new power management format
-      final powerConfig = PowerManagementConfig.fromBytes(value);
-      final telemetry = TelemetryData(
-        vinMillivolts: 0, // Not available in new format
-        temperatureCentiDegrees: powerConfig.highTempThreshold,
-        highThresholdCentiDegrees: powerConfig.highTempThreshold,
-        recoverThresholdCentiDegrees: powerConfig.recoveryThreshold,
-        sleepThresholdMilliVolts: powerConfig.sleepVoltageThreshold,
-        wakeThresholdMilliVolts: powerConfig.wakeVoltageThreshold,
-        statusFlags: 0x02, // Temperature data valid
-      );
+      // Parse monitoring data format (36 bytes)
+      final monitoringData = MonitoringData.fromBytes(value);
 
-      _lastTelemetry = telemetry;
       _recordSuccessfulOperation();
-      return telemetry;
+      return monitoringData;
     } catch (e) {
       debugPrint('Failed to read telemetry with error: $e');
       if (e is ArgumentError) rethrow;
@@ -589,12 +579,12 @@ class BLEService {
     }
   }
 
-  Future<Stream<TelemetryData>> enableTelemetryNotifications() async {
+  Future<Stream<MonitoringData>> enableTelemetryNotifications() async {
     if (_connectedDevice == null || !_connectedDevice!.isConnected) {
       throw Exception('NOT_CONNECTED');
     }
 
-    final characteristic = _findCharacteristic(TELEMETRY_UUID);
+    final characteristic = _findCharacteristic(MONITORING_UUID);
 
     if (characteristic == null) {
       throw Exception('CHARACTERISTIC_NOT_FOUND');
@@ -611,37 +601,28 @@ class BLEService {
         .where((value) => value.isNotEmpty)
         .map((value) {
           try {
-            debugPrint('Telemetry notification raw data length: ${value.length}, bytes: $value');
+            debugPrint('Monitoring notification raw data length: ${value.length}, bytes: $value');
 
-            // Only support new 8-byte power management format
-            if (value.length != 8) {
-              throw Exception('INVALID_DATA: Expected 8 bytes, got ${value.length}');
+            // Monitor data should be 36 bytes according to protocol
+            if (value.length != 36) {
+              debugPrint('Warning: Expected 36 bytes for monitoring data, got ${value.length}');
+              // Don't throw error, try to parse anyway
             }
 
-            // Parse new power management format
-            final powerConfig = PowerManagementConfig.fromBytes(value);
-            final telemetry = TelemetryData(
-              vinMillivolts: 0, // Not available in new format
-              temperatureCentiDegrees: powerConfig.highTempThreshold,
-              highThresholdCentiDegrees: powerConfig.highTempThreshold,
-              recoverThresholdCentiDegrees: powerConfig.recoveryThreshold,
-              sleepThresholdMilliVolts: powerConfig.sleepVoltageThreshold,
-              wakeThresholdMilliVolts: powerConfig.wakeVoltageThreshold,
-              statusFlags: 0x02, // Temperature data valid
-            );
+            // Parse monitoring data format (36 bytes)
+            final monitoringData = MonitoringData.fromBytes(value);
 
-            _lastTelemetry = telemetry;
             _recordSuccessfulOperation();
-            return telemetry;
+            return monitoringData;
           } catch (e) {
-            debugPrint('Failed to parse telemetry notification: $e');
+            debugPrint('Failed to parse monitoring notification: $e');
             rethrow;
           }
         });
   }
 
   Future<void> disableTelemetryNotifications() async {
-    final characteristic = _findCharacteristic(TELEMETRY_UUID);
+    final characteristic = _findCharacteristic(MONITORING_UUID);
     if (characteristic == null) {
       return;
     }
@@ -670,7 +651,7 @@ class BLEService {
       throw Exception('INVALID_PARAMETER');
     }
 
-    final characteristic = _findCharacteristic(TELEMETRY_UUID);
+    final characteristic = _findCharacteristic(POWER_MANAGEMENT_UUID);
 
     if (characteristic == null) {
       throw Exception('CHARACTERISTIC_NOT_FOUND');

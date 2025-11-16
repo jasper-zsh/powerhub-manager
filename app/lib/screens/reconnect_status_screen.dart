@@ -1,197 +1,53 @@
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
-import 'package:app/providers/app_state_provider.dart';
-import 'package:app/services/reconnect_manager.dart';
-import 'package:app/models/saved_controller.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-class ReconnectStatusScreen extends StatefulWidget {
+import 'package:app/models/connection_status_record.dart';
+import 'package:app/controllers/connection_session_controller.dart';
+
+class ReconnectStatusScreen extends ConsumerWidget {
   const ReconnectStatusScreen({super.key});
 
   @override
-  State<ReconnectStatusScreen> createState() => _ReconnectStatusScreenState();
-}
-
-class _ReconnectStatusScreenState extends State<ReconnectStatusScreen>
-    with TickerProviderStateMixin {
-  late AnimationController _pulseController;
-  late Animation<double> _pulseAnimation;
-
-  @override
-  void initState() {
-    super.initState();
-    _pulseController = AnimationController(
-      duration: const Duration(seconds: 2),
-      vsync: this,
-    );
-    _pulseAnimation = Tween<double>(
-      begin: 0.5,
-      end: 1.0,
-    ).animate(CurvedAnimation(
-      parent: _pulseController,
-      curve: Curves.easeInOut,
-    ));
-    _pulseController.repeat(reverse: true);
-  }
-
-  @override
-  void dispose() {
-    _pulseController.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final connectionState = ref.watch(connectionSessionControllerProvider);
+    final statusHistory = ref.watch(connectionStatusHistoryProvider);
+    
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Reconnect Status'),
+        title: const Text('Reconnection Status'),
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
-            onPressed: () {
-              final provider = context.read<AppStateProvider>();
-              provider.triggerReconnect();
-            },
-            tooltip: 'Trigger Reconnect',
-          ),
-          PopupMenuButton<String>(
-            onSelected: (value) {
-              final provider = context.read<AppStateProvider>();
-              switch (value) {
-                case 'reset_counters':
-                  provider.resetReconnectCounters();
-                  _showMessage('All reconnect counters reset');
-                  break;
-                case 'trigger_reconnect':
-                  provider.triggerReconnect();
-                  _showMessage('Manual reconnect triggered');
-                  break;
-              }
-            },
-            itemBuilder: (context) => [
-              const PopupMenuItem(
-                value: 'trigger_reconnect',
-                child: Row(
-                  children: [
-                    Icon(Icons.refresh),
-                    SizedBox(width: 8),
-                    Text('Trigger Reconnect'),
-                  ],
-                ),
-              ),
-              const PopupMenuItem(
-                value: 'reset_counters',
-                child: Row(
-                  children: [
-                    Icon(Icons.reset_tv),
-                    SizedBox(width: 8),
-                    Text('Reset Counters'),
-                  ],
-                ),
-              ),
-            ],
+            onPressed: () => _refreshConnectionStatus(ref),
+            tooltip: 'Refresh status',
           ),
         ],
       ),
-      body: Consumer<AppStateProvider>(
-        builder: (context, provider, child) {
-          final reconnectManager = provider.reconnectManager;
-          final statistics = provider.reconnectStatistics;
-
-          return SingleChildScrollView(
-            padding: const EdgeInsets.all(16.0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _buildStatusCard(reconnectManager, statistics),
-                const SizedBox(height: 16),
-                _buildStatisticsCard(statistics),
-                const SizedBox(height: 16),
-                _buildRecentAttemptsCard(reconnectManager),
-                const SizedBox(height: 16),
-                _buildControllersCard(provider),
-              ],
-            ),
-          );
-        },
-      ),
+      body: _buildBody(connectionState, statusHistory),
     );
   }
 
-  Widget _buildStatusCard(ReconnectManager manager, Map<String, dynamic> stats) {
-    final status = manager.status;
-    final lastSuccess = stats['lastSuccessfulReconnect'] as DateTime?;
-
-    return Card(
-      child: Padding(
+  Widget _buildBody(ConnectionSessionState connectionState, AsyncValue<List<ConnectionStatusRecord>> statusHistory) {
+    return RefreshIndicator(
+      onRefresh: () => _refreshConnectionStatus(ref),
+      child: SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
         padding: const EdgeInsets.all(16.0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              children: [
-                Icon(
-                  _getStatusIcon(status),
-                  color: _getStatusColor(status),
-                  size: 24,
-                ),
-                const SizedBox(width: 12),
-                Text(
-                  'Reconnect Status',
-                  style: Theme.of(context).textTheme.titleLarge,
-                ),
-                const Spacer(),
-                if (status == ReconnectStatus.running)
-                  AnimatedBuilder(
-                    animation: _pulseAnimation,
-                    builder: (context, child) {
-                      return Container(
-                        width: 12,
-                        height: 12,
-                        decoration: BoxDecoration(
-                          color: Colors.green.withValues(alpha: _pulseAnimation.value),
-                          shape: BoxShape.circle,
-                        ),
-                      );
-                    },
-                  ),
-              ],
-            ),
+            _buildCurrentStatusCard(connectionState),
             const SizedBox(height: 16),
-            Row(
-              children: [
-                Text(
-                  _getStatusText(status),
-                  style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                    color: _getStatusColor(status),
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const Spacer(),
-                if (lastSuccess != null)
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      Text(
-                        'Last Success',
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: Colors.grey,
-                        ),
-                      ),
-                      Text(
-                        _formatTime(lastSuccess),
-                        style: Theme.of(context).textTheme.bodySmall,
-                      ),
-                    ],
-                  ),
-              ],
-            ),
+            _buildReconnectionSettingsCard(connectionState),
+            const SizedBox(height: 16),
+            _buildStatusHistoryCard(statusHistory),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildStatisticsCard(Map<String, dynamic> stats) {
+  Widget _buildCurrentStatusCard(ConnectionSessionState connectionState) {
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16.0),
@@ -201,367 +57,261 @@ class _ReconnectStatusScreenState extends State<ReconnectStatusScreen>
             Row(
               children: [
                 Icon(
-                  Icons.analytics,
-                  color: Colors.blue,
-                  size: 24,
+                  _getConnectionIcon(connectionState.status),
+                  color: _getConnectionColor(connectionState.status),
                 ),
-                const SizedBox(width: 12),
+                const SizedBox(width: 8),
                 Text(
-                  'Statistics',
-                  style: Theme.of(context).textTheme.titleLarge,
+                  'Current Status',
+                  style: Theme.of(context).textTheme.titleMedium,
                 ),
               ],
             ),
             const SizedBox(height: 16),
-            GridView.count(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              crossAxisCount: 2,
-              childAspectRatio: 2,
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                _buildStatItem('Total Attempts', '${stats['totalAttempts']}', Icons.sync),
-                _buildStatItem('Successful', '${stats['successfulAttempts']}', Icons.check_circle, Colors.green),
-                _buildStatItem('Failed', '${stats['failedAttempts']}', Icons.error, Colors.red),
-                _buildStatItem('Success Rate', '${(stats['successRate'] * 100).toStringAsFixed(1)}%', Icons.percent, Colors.blue),
-                _buildStatItem('Recent (24h)', '${stats['recentAttempts']}', Icons.history),
-                _buildStatItem('Active', '${stats['activeControllers']}', Icons.bluetooth, Colors.orange),
+                Text(
+                  'Connection Status',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                Text(
+                  _getConnectionStatusText(connectionState.status),
+                  style: Theme.of(
+                    context,
+                  ).textTheme.headlineSmall?.copyWith(
+                        color: _getConnectionColor(connectionState.status),
+                        fontWeight: FontWeight.bold,
+                      ),
+                ),
               ],
             ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildStatItem(String label, String value, IconData icon, [Color? color]) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.grey.shade50,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.grey.shade200),
-      ),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(
-                icon,
-                size: 16,
-                color: color ?? Colors.grey.shade600,
-              ),
-              const SizedBox(width: 4),
-              Expanded(
-                child: Text(
-                  value,
-                  style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                    fontWeight: FontWeight.bold,
-                    color: color ?? Colors.black87,
+            if (connectionState.device != null) ...[
+              const SizedBox(height: 8),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    'Device',
+                    style: Theme.of(context).textTheme.titleMedium,
                   ),
-                  textAlign: TextAlign.center,
-                  overflow: TextOverflow.ellipsis,
-                ),
+                  Text(
+                    connectionState.device!.name,
+                    style: Theme.of(context).textTheme.headlineSmall,
+                  ),
+                ],
               ),
             ],
-          ),
-          const SizedBox(height: 4),
-          Text(
-            label,
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-              color: Colors.grey.shade600,
-            ),
-            textAlign: TextAlign.center,
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildRecentAttemptsCard(ReconnectManager manager) {
-    final attempts = manager.attempts.take(10).toList();
-
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(
-                  Icons.history,
-                  color: Colors.purple,
-                  size: 24,
-                ),
-                const SizedBox(width: 12),
-                Text(
-                  'Recent Attempts',
-                  style: Theme.of(context).textTheme.titleLarge,
-                ),
-                const Spacer(),
-                Text(
-                  '${attempts.length} shown',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: Colors.grey,
+            if (connectionState.lastError != null) ...[
+              const SizedBox(height: 8),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    'Last Error',
+                    style: Theme.of(context).textTheme.titleMedium,
                   ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            if (attempts.isEmpty)
-              Center(
-                child: Padding(
-                  padding: const EdgeInsets.all(32.0),
-                  child: Column(
-                    children: [
-                      Icon(
-                        Icons.history,
-                        size: 48,
-                        color: Colors.grey.shade400,
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        'No reconnection attempts yet',
-                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          color: Colors.grey.shade600,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              )
-            else
-              ListView.separated(
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                itemCount: attempts.length,
-                separatorBuilder: (context, index) => const Divider(),
-                itemBuilder: (context, index) {
-                  final attempt = attempts[index];
-                  return _buildAttemptItem(attempt);
-                },
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildAttemptItem(ReconnectAttempt attempt) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8.0),
-      child: Row(
-        children: [
-          Icon(
-            attempt.success ? Icons.check_circle : Icons.error,
-            color: attempt.success ? Colors.green : Colors.red,
-            size: 20,
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Attempt ${attempt.attemptNumber}',
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-                Text(
-                  attempt.success ? 'Successful' : (attempt.error ?? 'Failed'),
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: attempt.success ? Colors.green : Colors.red,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Text(
-                _formatTime(attempt.timestamp),
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-              Text(
-                'Delay: ${attempt.delay.inSeconds}s',
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: Colors.grey,
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildControllersCard(AppStateProvider provider) {
-    final controllers = provider.savedControllers;
-
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(
-                  Icons.bluetooth,
-                  color: Colors.blue,
-                  size: 24,
-                ),
-                const SizedBox(width: 12),
-                Text(
-                  'Controllers',
-                  style: Theme.of(context).textTheme.titleLarge,
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            if (controllers.isEmpty)
-              Center(
-                child: Padding(
-                  padding: const EdgeInsets.all(32.0),
-                  child: Text(
-                    'No saved controllers',
-                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      color: Colors.grey.shade600,
+                  Expanded(
+                    child: Text(
+                      connectionState.lastError!,
+                      style: Theme.of(
+                        context,
+                      ).textTheme.headlineSmall?.copyWith(color: Colors.red),
+                      textAlign: TextAlign.right,
                     ),
                   ),
-                ),
-              )
-            else
-              ListView.separated(
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                itemCount: controllers.length,
-                separatorBuilder: (context, index) => const Divider(),
-                itemBuilder: (context, index) {
-                  final controller = controllers[index];
-                  final attemptCount = provider.reconnectManager.getAttemptCount(controller.controllerId);
-                  return _buildControllerItem(controller, attemptCount);
-                },
+                ],
               ),
+            ],
+            if (connectionState.isReconnecting) ...[
+              const SizedBox(height: 16),
+              const LinearProgressIndicator(),
+              const SizedBox(height: 8),
+              Text(
+                'Attempting to reconnect... (${connectionState.reconnectAttempts}/${connectionState.maxReconnectAttempts})',
+                style: Theme.of(context).textTheme.bodyMedium,
+              ),
+            ],
           ],
         ),
       ),
     );
   }
 
-  Widget _buildControllerItem(SavedController controller, int attemptCount) {
-    return ListTile(
-      leading: CircleAvatar(
-        backgroundColor: _getConnectionStatusColor(controller.connectionStatus),
-        child: Icon(
-          _getConnectionStatusIcon(controller.connectionStatus),
-          color: Colors.white,
-          size: 20,
-        ),
-      ),
-      title: Text(controller.controllerId),
-      subtitle: Text(
-        'Attempts: $attemptCount',
-        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-          color: Colors.grey.shade600,
-        ),
-      ),
-      trailing: Text(
-        _getConnectionStatusText(controller.connectionStatus),
-        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-          color: _getConnectionStatusColor(controller.connectionStatus),
-          fontWeight: FontWeight.w500,
+  Widget _buildReconnectionSettingsCard(ConnectionSessionState connectionState) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(
+                  Icons.settings,
+                  color: Colors.blue,
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  'Reconnection Settings',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            ListTile(
+              title: const Text('Auto Reconnect'),
+              subtitle: const Text('Automatically reconnect when connection is lost'),
+              trailing: Switch(
+                value: connectionState.autoReconnect,
+                onChanged: (value) => _toggleAutoReconnect(ref, value),
+              ),
+            ),
+            ListTile(
+              title: const Text('Max Reconnect Attempts'),
+              subtitle: Text('${connectionState.maxReconnectAttempts} attempts'),
+              trailing: const Icon(Icons.edit),
+              onTap: () => _showMaxReconnectAttemptsDialog(connectionState.maxReconnectAttempts),
+            ),
+            ListTile(
+              title: const Text('Reconnect Interval'),
+              subtitle: Text('${connectionState.reconnectIntervalSeconds}s'),
+              trailing: const Icon(Icons.edit),
+              onTap: () => _showReconnectIntervalDialog(connectionState.reconnectIntervalSeconds),
+            ),
+            ListTile(
+              title: const Text('Connection Timeout'),
+              subtitle: Text('${connectionState.connectionTimeoutSeconds}s'),
+              trailing: const Icon(Icons.edit),
+              onTap: () => _showConnectionTimeoutDialog(connectionState.connectionTimeoutSeconds),
+            ),
+          ],
         ),
       ),
     );
   }
 
-  IconData _getStatusIcon(ReconnectStatus status) {
+  Widget _buildStatusHistoryCard(AsyncValue<List<ConnectionStatusRecord>> statusHistory) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(
+                  Icons.history,
+                  color: Colors.green,
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  'Connection History',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                const Spacer(),
+                TextButton(
+                  onPressed: () => _clearHistory(ref),
+                  child: const Text('Clear'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            statusHistory.when(
+              loading: () => const Center(child: CircularProgressIndicator()),
+              error: (error, stack) => Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.error, color: Colors.red),
+                    const SizedBox(height: 8),
+                    Text('Error loading history: $error'),
+                    const SizedBox(height: 8),
+                    ElevatedButton(
+                      onPressed: () => _refreshConnectionStatus(ref),
+                      child: const Text('Retry'),
+                    ),
+                  ],
+                ),
+              ),
+              data: (records) => records.isEmpty
+                  ? const Center(
+                      child: Text('No connection history available'),
+                    )
+                  : ListView.builder(
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      itemCount: records.length,
+                      itemBuilder: (context, index) {
+                        final record = records[index];
+                        return ListTile(
+                          leading: Icon(
+                            _getConnectionIcon(record.status),
+                            color: _getConnectionColor(record.status),
+                          ),
+                          title: Text(_getConnectionStatusText(record.status)),
+                          subtitle: Text(_formatTimestamp(record.timestamp)),
+                          trailing: record.error != null
+                              ? const Icon(Icons.error, color: Colors.red)
+                              : null,
+                        );
+                      },
+                    ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  IconData _getConnectionIcon(ConnectionStatus status) {
     switch (status) {
-      case ReconnectStatus.idle:
+      case ConnectionStatus.disconnected:
         return Icons.bluetooth_disabled;
-      case ReconnectStatus.running:
-        return Icons.sync;
-      case ReconnectStatus.paused:
-        return Icons.pause_circle;
-      case ReconnectStatus.stopped:
-        return Icons.stop_circle;
-    }
-  }
-
-  Color _getStatusColor(ReconnectStatus status) {
-    switch (status) {
-      case ReconnectStatus.idle:
-        return Colors.grey;
-      case ReconnectStatus.running:
-        return Colors.green;
-      case ReconnectStatus.paused:
-        return Colors.orange;
-      case ReconnectStatus.stopped:
-        return Colors.red;
-    }
-  }
-
-  String _getStatusText(ReconnectStatus status) {
-    switch (status) {
-      case ReconnectStatus.idle:
-        return 'Idle';
-      case ReconnectStatus.running:
-        return 'Running';
-      case ReconnectStatus.paused:
-        return 'Paused';
-      case ReconnectStatus.stopped:
-        return 'Stopped';
-    }
-  }
-
-  IconData _getConnectionStatusIcon(SavedControllerConnectionStatus status) {
-    switch (status) {
-      case SavedControllerConnectionStatus.connected:
-        return Icons.bluetooth_connected;
-      case SavedControllerConnectionStatus.connecting:
+      case ConnectionStatus.connecting:
         return Icons.bluetooth_searching;
-      case SavedControllerConnectionStatus.disconnected:
-        return Icons.bluetooth_disabled;
-      case SavedControllerConnectionStatus.unavailable:
+      case ConnectionStatus.connected:
+        return Icons.bluetooth_connected;
+      case ConnectionStatus.reconnecting:
+        return Icons.sync;
+      case ConnectionStatus.failed:
         return Icons.error;
     }
   }
 
-  Color _getConnectionStatusColor(SavedControllerConnectionStatus status) {
+  Color _getConnectionColor(ConnectionStatus status) {
     switch (status) {
-      case SavedControllerConnectionStatus.connected:
-        return Colors.green;
-      case SavedControllerConnectionStatus.connecting:
-        return Colors.orange;
-      case SavedControllerConnectionStatus.disconnected:
+      case ConnectionStatus.disconnected:
         return Colors.grey;
-      case SavedControllerConnectionStatus.unavailable:
+      case ConnectionStatus.connecting:
+      case ConnectionStatus.reconnecting:
+        return Colors.orange;
+      case ConnectionStatus.connected:
+        return Colors.green;
+      case ConnectionStatus.failed:
         return Colors.red;
     }
   }
 
-  String _getConnectionStatusText(SavedControllerConnectionStatus status) {
+  String _getConnectionStatusText(ConnectionStatus status) {
     switch (status) {
-      case SavedControllerConnectionStatus.connected:
-        return 'Connected';
-      case SavedControllerConnectionStatus.connecting:
-        return 'Connecting';
-      case SavedControllerConnectionStatus.disconnected:
+      case ConnectionStatus.disconnected:
         return 'Disconnected';
-      case SavedControllerConnectionStatus.unavailable:
-        return 'Unavailable';
+      case ConnectionStatus.connecting:
+        return 'Connecting';
+      case ConnectionStatus.connected:
+        return 'Connected';
+      case ConnectionStatus.reconnecting:
+        return 'Reconnecting';
+      case ConnectionStatus.failed:
+        return 'Failed';
     }
   }
 
-  String _formatTime(DateTime dateTime) {
+  String _formatTimestamp(DateTime timestamp) {
     final now = DateTime.now();
-    final diff = now.difference(dateTime);
-
+    final diff = now.difference(timestamp);
+    
     if (diff.inSeconds < 60) {
       return '${diff.inSeconds}s ago';
     } else if (diff.inMinutes < 60) {
@@ -569,16 +319,127 @@ class _ReconnectStatusScreenState extends State<ReconnectStatusScreen>
     } else if (diff.inHours < 24) {
       return '${diff.inHours}h ago';
     } else {
-      return '${dateTime.day}/${dateTime.month}/${dateTime.year}';
+      return '${diff.inDays}d ago';
     }
   }
 
-  void _showMessage(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        duration: const Duration(seconds: 2),
+  void _toggleAutoReconnect(WidgetRef ref, bool value) {
+    ref.read(connectionSessionControllerProvider.notifier).setAutoReconnect(value);
+  }
+
+  void _showMaxReconnectAttemptsDialog(int currentValue) {
+    final controller = TextEditingController(text: currentValue.toString());
+    
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Max Reconnect Attempts'),
+        content: TextField(
+          controller: controller,
+          keyboardType: TextInputType.number,
+          decoration: const InputDecoration(
+            labelText: 'Maximum attempts',
+            hintText: 'Enter maximum reconnect attempts',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () {
+              final value = int.tryParse(controller.text);
+              if (value != null && value > 0) {
+                ref.read(connectionSessionControllerProvider.notifier).setMaxReconnectAttempts(value);
+                Navigator.pop(context);
+              }
+            },
+            child: const Text('Save'),
+          ),
+        ],
       ),
+    );
+  }
+
+  void _showReconnectIntervalDialog(int currentValue) {
+    final controller = TextEditingController(text: currentValue.toString());
+    
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Reconnect Interval'),
+        content: TextField(
+          controller: controller,
+          keyboardType: TextInputType.number,
+          decoration: const InputDecoration(
+            labelText: 'Interval (seconds)',
+            hintText: 'Enter reconnect interval in seconds',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () {
+              final value = int.tryParse(controller.text);
+              if (value != null && value > 0) {
+                ref.read(connectionSessionControllerProvider.notifier).setReconnectInterval(value);
+                Navigator.pop(context);
+              }
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showConnectionTimeoutDialog(int currentValue) {
+    final controller = TextEditingController(text: currentValue.toString());
+    
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Connection Timeout'),
+        content: TextField(
+          controller: controller,
+          keyboardType: TextInputType.number,
+          decoration: const InputDecoration(
+            labelText: 'Timeout (seconds)',
+            hintText: 'Enter connection timeout in seconds',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () {
+              final value = int.tryParse(controller.text);
+              if (value != null && value > 0) {
+                ref.read(connectionSessionControllerProvider.notifier).setConnectionTimeout(value);
+                Navigator.pop(context);
+              }
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _refreshConnectionStatus(WidgetRef ref) {
+    return ref.read(connectionSessionControllerProvider.notifier).refreshStatus();
+  }
+
+  void _clearHistory(WidgetRef ref) {
+    ref.read(connectionSessionControllerProvider.notifier).clearStatusHistory();
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Connection history cleared')),
     );
   }
 }

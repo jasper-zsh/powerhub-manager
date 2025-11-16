@@ -61,6 +61,17 @@ class MonitoringData {
   bool get hasValidTempData =>
       powerZoneTemp != 0x8000 && controlZoneTemp != 0x8000;
 
+  double getChannelCurrent(int channelIndex) {
+    if (channelIndex < 0 || channelIndex >= channelCurrents.length) {
+      return 0.0;
+    }
+    return channelCurrents[channelIndex];
+  }
+
+  bool get isThermalProtectionActive => statusFlags.thermalProtectionActive;
+  bool get isTemperatureDataValid => statusFlags.temperatureDataValid;
+  bool get isCurrentDataValid => statusFlags.currentDataValid;
+
   @override
   String toString() {
     return 'MonitoringData('
