@@ -6,6 +6,7 @@ import 'package:app/providers/orchestration_provider.dart';
 import 'package:app/providers/app_state_provider.dart';
 import 'package:app/models/orchestration/toggle_scene.dart';
 import 'package:app/widgets/orchestration/command_preview_sheet.dart';
+import 'package:app/widgets/orchestration/switch_hub_sync_sheet.dart';
 
 class OrchestrationScreen extends StatefulWidget {
   const OrchestrationScreen({super.key});
@@ -72,6 +73,16 @@ class _OrchestrationScreenState extends State<OrchestrationScreen> {
         return Scaffold(
           appBar: AppBar(
             actions: [
+              IconButton(
+                icon: const Icon(Icons.hub_outlined),
+                tooltip: 'SwitchHub 配置',
+                onPressed: () => _openSwitchHubSync(
+                  context,
+                  provider,
+                  scene,
+                  aliasMap,
+                ),
+              ),
               IconButton(
                 icon: const Icon(Icons.history),
                 tooltip: 'View execution logs',
@@ -160,6 +171,7 @@ class _OrchestrationScreenState extends State<OrchestrationScreen> {
                   scene.id,
                   toggleId: toggleId,
                   stateId: stateId,
+                  stateSnapshot: Map<String, String>.from(_selectedStates),
                 );
                 
                 if (preview.actions.isEmpty) {
@@ -230,11 +242,12 @@ class _OrchestrationScreenState extends State<OrchestrationScreen> {
                     _selectedStates[toggleId] = stateId;
                   });
 
-                  final preview = provider.previewScene(
-                    scene.id,
-                    toggleId: toggleId,
-                    stateId: stateId,
-                  );
+                final preview = provider.previewScene(
+                  scene.id,
+                  toggleId: toggleId,
+                  stateId: stateId,
+                  stateSnapshot: Map<String, String>.from(_selectedStates),
+                );
 
                   bool executionSuccess = false;
                   if (preview.actions.isNotEmpty) {
@@ -348,6 +361,7 @@ class _OrchestrationScreenState extends State<OrchestrationScreen> {
       scene.id,
       toggleId: toggleId,
       stateId: stateId,
+      stateSnapshot: Map<String, String>.from(_selectedStates),
     );
 
     showModalBottomSheet<void>(
@@ -420,6 +434,28 @@ class _OrchestrationScreenState extends State<OrchestrationScreen> {
         );
       },
     );
+  }
+
+  void _openSwitchHubSync(
+    BuildContext context,
+    OrchestrationProvider provider,
+    ToggleScene scene,
+    Map<String, String> aliasMap,
+  ) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        builder: (_) => SwitchHubSyncSheet(
+          scene: scene,
+          provider: provider,
+          aliasMap: aliasMap,
+        ),
+      );
+    });
   }
 
   void _showToggleEditor(

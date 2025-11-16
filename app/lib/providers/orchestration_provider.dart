@@ -1,19 +1,31 @@
+import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
+import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:app/models/orchestration/toggle_scene.dart';
 import 'package:app/models/orchestration/execution_log_entry.dart';
 import 'package:app/models/control_command/set_command.dart';
 import 'package:app/services/storage_service.dart';
 import 'package:app/services/ble_service.dart';
+import 'package:app/services/switch_hub_ble_service.dart';
+import 'package:app/models/switch_hub/sequence_item.dart';
+import 'package:app/models/switch_hub/state_context.dart';
+import 'package:app/models/switch_hub/config.dart';
+import 'package:app/models/switch_hub/command_packet.dart';
 
 class CommandPreviewResult {
   CommandPreviewResult({
-    required this.actions,
-    required this.bundleOrder,
+    required this.sequenceItems,
+    List<CommandAction>? actions,
+    List<String>? bundleOrder,
     List<String>? warnings,
     List<String>? missingBundles,
-  }) : warnings = warnings ?? <String>[],
-       missingBundles = missingBundles ?? <String>[];
+  })  : actions = actions ?? _actionsFromSequences(sequenceItems),
+        bundleOrder = bundleOrder ?? const <String>[],
+        warnings = warnings ?? <String>[],
+        missingBundles = missingBundles ?? <String>[];
 
+  final List<SwitchHubSequenceItem> sequenceItems;
   final List<CommandAction> actions;
   final List<String> bundleOrder;
   final List<String> warnings;
@@ -22,13 +34,42 @@ class CommandPreviewResult {
   bool get hasWarnings => warnings.isNotEmpty || missingBundles.isNotEmpty;
 }
 
+List<CommandAction> _actionsFromSequences(
+  List<SwitchHubSequenceItem> sequences,
+) {
+  final actions = <CommandAction>[];
+  for (final item in sequences) {
+    for (final packet in item.commandPackets) {
+      final payload = packet.payloadBytes;
+      if (payload.isEmpty) {
+        continue;
+      }
+      actions.add(
+        CommandAction(
+          controllerId: item.targetMac,
+          type: CommandActionType.channelValue,
+          channel: packet.channel,
+          value: payload.first,
+        ),
+      );
+    }
+  }
+  return actions;
+}
+
 class OrchestrationProvider with ChangeNotifier {
-  OrchestrationProvider({StorageService? storage, BLEService? bleService})
+  OrchestrationProvider({
+    StorageService? storage,
+    BLEService? bleService,
+    SwitchHubBleService? switchHubBleService,
+  })
     : _storage = storage ?? StorageService(),
-      _bleService = bleService ?? BLEService();
+      _bleService = bleService ?? BLEService(),
+      _switchHubBleService = switchHubBleService ?? SwitchHubBleService();
 
   final StorageService _storage;
   final BLEService _bleService;
+  final SwitchHubBleService _switchHubBleService;
   final List<ToggleScene> _scenes = <ToggleScene>[];
   List<ExecutionLogEntry> _logs = <ExecutionLogEntry>[];
   ToggleScene? _activeScene;
@@ -317,6 +358,20 @@ class OrchestrationProvider with ChangeNotifier {
     return saveScene(updated);
   }
 
+  void selectScene(String sceneId) {
+    ToggleScene? scene;
+    for (final candidate in _scenes) {
+      if (candidate.id == sceneId) {
+        scene = candidate;
+        break;
+      }
+    }
+    if (scene != null && _activeScene != scene) {
+      _activeScene = scene;
+      notifyListeners();
+    }
+  }
+
   Future<void> deleteScene(String sceneId) async {
     await _storage.deleteToggleScene(sceneId);
     _scenes.removeWhere((scene) => scene.id == sceneId);
@@ -330,6 +385,7 @@ class OrchestrationProvider with ChangeNotifier {
     String sceneId, {
     required String toggleId,
     required String stateId,
+    Map<String, String>? stateSnapshot,
   }) {
     final scene = _scenes.firstWhere(
       (candidate) => candidate.id == sceneId,
@@ -344,10 +400,28 @@ class OrchestrationProvider with ChangeNotifier {
       ),
     );
 
-    final bundleOrder = <String>[];
-    final actions = <CommandAction>[];
     final warnings = <String>[];
     final missingBundles = <String>[];
+
+    if (state.logic != null) {
+      final snapshot = _buildSnapshot(scene, stateSnapshot)
+        ..[toggleId] = stateId;
+      final context = SwitchHubStateContext(
+        activeStates: snapshot,
+        onMissingIdentifier: (identifier) {
+          warnings.add('Unknown identifier in condition: $identifier');
+        },
+      );
+      final sequenceItems = state.logic!.evaluate(context);
+      return CommandPreviewResult(
+        sequenceItems: sequenceItems,
+        warnings: warnings,
+        missingBundles: missingBundles,
+      );
+    }
+
+    final bundleOrder = <String>[];
+    final actions = <CommandAction>[];
 
     void addBundle(CommandBundle bundle) {
       if (bundleOrder.contains(bundle.id)) {
@@ -381,12 +455,34 @@ class OrchestrationProvider with ChangeNotifier {
       }
     }
 
+    final sequence = _sequencesFromActions(actions);
     return CommandPreviewResult(
+      sequenceItems: sequence,
       actions: actions,
       bundleOrder: bundleOrder,
       warnings: warnings,
       missingBundles: missingBundles,
     );
+  }
+
+  SwitchHubConfig buildSwitchHubConfig(
+    String sceneId, {
+    int schemaVersion = 1,
+  }) {
+    final scene = _scenes.firstWhere(
+      (candidate) => candidate.id == sceneId,
+      orElse: () => throw ArgumentError('Scene $sceneId not found'),
+    );
+    return scene.toSwitchHubConfig(schemaVersion: schemaVersion);
+  }
+
+  Future<void> pushSceneToSwitchHub(
+    String sceneId, {
+    required BluetoothDevice device,
+    int schemaVersion = 1,
+  }) async {
+    final config = buildSwitchHubConfig(sceneId, schemaVersion: schemaVersion);
+    await _switchHubBleService.pushConfig(device, config);
   }
 
   Future<void> recordExecution({
@@ -491,4 +587,69 @@ class OrchestrationProvider with ChangeNotifier {
     }
     return null;
   }
+
+  Map<String, String> _buildSnapshot(
+    ToggleScene scene,
+    Map<String, String>? provided,
+  ) {
+    final snapshot = provided == null
+        ? <String, String>{}
+        : Map<String, String>.from(provided);
+    for (final toggleId in _toggleOrder(scene)) {
+      snapshot.putIfAbsent(
+        toggleId,
+        () {
+          final states = scene.states
+              .where((state) => state.toggleId == toggleId)
+              .toList();
+          final defaultState = states.firstWhere(
+            (state) => state.isDefault,
+            orElse: () => states.first,
+          );
+          return defaultState.stateId;
+        },
+      );
+    }
+    return snapshot;
+  }
+}
+
+List<SwitchHubSequenceItem> _sequencesFromActions(
+  List<CommandAction> actions,
+) {
+  final grouped = <String, List<CommandAction>>{};
+  for (final action in actions) {
+    grouped.putIfAbsent(action.controllerId, () => <CommandAction>[]).add(action);
+  }
+
+  final sequence = <SwitchHubSequenceItem>[];
+  grouped.forEach((controllerId, controllerActions) {
+    final packets = <SwitchHubCommandPacket>[];
+    for (final action in controllerActions) {
+      if (action.type != CommandActionType.channelValue) {
+        continue;
+      }
+      final channel = action.channel;
+      final value = action.value;
+      if (channel == null || value == null) {
+        continue;
+      }
+      packets.add(
+        SwitchHubCommandPacket(
+          mode: 0x00,
+          channel: channel,
+          payload: base64Encode([value & 0xFF]),
+        ),
+      );
+    }
+    if (packets.isNotEmpty) {
+      sequence.add(
+        SwitchHubSequenceItem(
+          targetMac: controllerId,
+          commandPackets: packets,
+        ),
+      );
+    }
+  });
+  return sequence;
 }

@@ -3,6 +3,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:app/providers/orchestration_provider.dart';
 import 'package:app/models/orchestration/toggle_scene.dart';
 import 'package:app/services/storage_service.dart';
+import 'package:app/models/switch_hub/config.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -233,5 +234,15 @@ void main() {
     expect(action.controllerId, equals('controller-b'));
     expect(action.type, equals(CommandActionType.presetTrigger));
     expect(action.presetId, equals(5));
+  });
+
+  test('buildSwitchHubConfig exports schema compliant payload', () {
+    final config = provider.buildSwitchHubConfig('scene-1');
+    expect(config.schemaVersion, equals(1));
+    expect(config.switches, hasLength(1));
+    final sw = config.switches.first;
+    expect(sw.switchId, equals(1));
+    expect(sw.uiConfig?.onLabel, equals('On'));
+    expect(sw.uiConfig?.offLabel, equals('Off'));
   });
 }

@@ -1,3 +1,12 @@
+import 'dart:convert';
+
+import 'package:app/models/switch_hub/command_packet.dart';
+import 'package:app/models/switch_hub/config.dart';
+import 'package:app/models/switch_hub/logic_node.dart';
+import 'package:app/models/switch_hub/sequence_item.dart';
+import 'package:app/models/switch_hub/switch_definition.dart';
+import 'package:app/models/switch_hub/ui_config.dart';
+
 enum CommandActionType { channelValue, presetTrigger }
 
 CommandActionType _commandActionTypeFromString(String value) {
@@ -138,6 +147,7 @@ class ToggleState {
     required this.label,
     this.isDefault = false,
     List<CommandBundle>? commandBundles,
+    this.logic,
   }) : commandBundles = commandBundles ?? [];
 
   final String toggleId;
@@ -145,8 +155,12 @@ class ToggleState {
   final String label;
   final bool isDefault;
   final List<CommandBundle> commandBundles;
+  final SwitchHubLogicNode? logic;
 
   bool get hasCommands => commandBundles.any((bundle) => !bundle.isEmpty);
+
+  SwitchHubLogicNode get resolvedLogic =>
+      logic ?? _logicFromCommandBundles(commandBundles);
 
   ToggleState copyWith({
     String? toggleId,
@@ -154,6 +168,7 @@ class ToggleState {
     String? label,
     bool? isDefault,
     List<CommandBundle>? commandBundles,
+    SwitchHubLogicNode? logic,
   }) {
     return ToggleState(
       toggleId: toggleId ?? this.toggleId,
@@ -162,6 +177,7 @@ class ToggleState {
       isDefault: isDefault ?? this.isDefault,
       commandBundles:
           commandBundles ?? List<CommandBundle>.from(this.commandBundles),
+      logic: logic ?? this.logic,
     );
   }
 
@@ -181,6 +197,7 @@ class ToggleState {
       'commandBundles': commandBundles
           .map((bundle) => bundle.toJson())
           .toList(),
+      if (logic != null) 'logic': logic!.toJson(),
     };
   }
 
@@ -197,6 +214,11 @@ class ToggleState {
                 CommandBundle.fromJson(Map<String, dynamic>.from(entry as Map)),
           )
           .toList(),
+      logic: json['logic'] == null
+          ? null
+          : SwitchHubLogicNode.fromJson(
+              Map<String, dynamic>.from(json['logic'] as Map),
+            ),
     );
   }
 }
@@ -332,4 +354,99 @@ class ToggleScene {
       isPublished: json['isPublished'] as bool? ?? false,
     );
   }
+}
+
+extension SwitchHubSceneAdapter on ToggleScene {
+  SwitchHubConfig toSwitchHubConfig({int schemaVersion = 1}) {
+    final grouped = <String, List<ToggleState>>{};
+    for (final state in states) {
+      grouped.putIfAbsent(state.toggleId, () => <ToggleState>[]).add(state);
+    }
+
+    final switches = <SwitchHubSwitch>[];
+    var switchIndex = 1;
+    grouped.forEach((toggleId, toggleStates) {
+      final onState = _resolveState(toggleStates, suffix: 'on');
+      final offState = _resolveState(toggleStates, suffix: 'off');
+      final ui = SwitchHubUiConfig(
+        channelLabel: toggleId,
+        onLabel: onState?.label,
+        offLabel: offState?.label,
+      );
+      switches.add(
+        SwitchHubSwitch(
+          switchId: switchIndex++,
+          revision: updatedAt.millisecondsSinceEpoch & 0xFFFF,
+          onLogic: (onState ?? toggleStates.first).resolvedLogic,
+          offLogic: (offState ?? toggleStates.first).resolvedLogic,
+          uiConfig: ui,
+        ),
+      );
+    });
+
+    return SwitchHubConfig(
+      schemaVersion: schemaVersion,
+      switches: switches,
+      metadata: {
+        'scene_id': id,
+        'scene_name': name,
+        'updated_at': updatedAt.toIso8601String(),
+      },
+    );
+  }
+}
+
+ToggleState? _resolveState(List<ToggleState> states, {required String suffix}) {
+  final lowerSuffix = suffix.toLowerCase();
+  for (final state in states) {
+    if (state.stateId.toLowerCase().endsWith(lowerSuffix)) {
+      return state;
+    }
+  }
+  return null;
+}
+
+SwitchHubLogicNode _logicFromCommandBundles(List<CommandBundle> bundles) {
+  final sequences = <SwitchHubSequenceItem>[];
+  for (final bundle in bundles) {
+    sequences.addAll(_sequenceFromBundle(bundle));
+  }
+  return SwitchHubLeafNode(sequence: sequences);
+}
+
+List<SwitchHubSequenceItem> _sequenceFromBundle(CommandBundle bundle) {
+  final grouped = <String, List<CommandAction>>{};
+  for (final action in bundle.actions) {
+    grouped.putIfAbsent(action.controllerId, () => <CommandAction>[]).add(action);
+  }
+  final items = <SwitchHubSequenceItem>[];
+  grouped.forEach((controllerId, actions) {
+    final packets = <SwitchHubCommandPacket>[];
+    for (final action in actions) {
+      if (action.type != CommandActionType.channelValue) {
+        continue;
+      }
+      final value = action.value;
+      final channel = action.channel;
+      if (value == null || channel == null) {
+        continue;
+      }
+      packets.add(
+        SwitchHubCommandPacket(
+          mode: 0x00,
+          channel: channel,
+          payload: base64Encode([value & 0xFF]),
+        ),
+      );
+    }
+    if (packets.isNotEmpty) {
+      items.add(
+        SwitchHubSequenceItem(
+          targetMac: controllerId,
+          commandPackets: packets,
+        ),
+      );
+    }
+  });
+  return items;
 }
