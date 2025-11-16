@@ -20,11 +20,11 @@ class SwitchHubState {
   });
 
   factory SwitchHubState.initial() => const SwitchHubState(
-        isScanning: false,
-        isPushing: false,
-        discoveredDevices: <BluetoothDevice>[],
-        hasInitialized: false,
-      );
+    isScanning: false,
+    isPushing: false,
+    discoveredDevices: <BluetoothDevice>[],
+    hasInitialized: false,
+  );
 
   final bool isScanning;
   final bool isPushing;
@@ -146,8 +146,11 @@ class SwitchHubController extends StateNotifier<SwitchHubState> {
 
   Future<bool> pushConfigToDevice(
     BluetoothDevice device,
-    SwitchHubConfig config,
-  ) async {
+    SwitchHubConfig config, {
+    bool includeFontGeneration = true,
+    int fontSize = 16,
+    int bpp = 2,
+  }) async {
     if (state.isPushing) {
       return false;
     }
@@ -157,25 +160,40 @@ class SwitchHubController extends StateNotifier<SwitchHubState> {
       clearErrorMessage: true,
     );
     try {
+      // Push configuration first
       await _bleService.pushConfig(device, config);
+
+      // Generate and push font data if requested
+      if (includeFontGeneration) {
+        await _bleService.generateAndPushFontData(
+          device,
+          config,
+          fontSize: fontSize,
+          bpp: bpp,
+          onProgress: (current, total) {
+            state = state.copyWith(statusMessage: '字库推送中: $current/$total');
+          },
+        );
+      }
+
       state = state.copyWith(
         isPushing: false,
         statusMessage: '配置推送成功: ${device.remoteId.str}',
       );
       return true;
     } catch (error) {
-      state = state.copyWith(
-        isPushing: false,
-        errorMessage: '推送失败: $error',
-      );
+      state = state.copyWith(isPushing: false, errorMessage: '推送失败: $error');
       return false;
     }
   }
 
   Future<int> pushConfigToAll(
     Iterable<BluetoothDevice> devices,
-    SwitchHubConfig config,
-  ) async {
+    SwitchHubConfig config, {
+    bool includeFontGeneration = true,
+    int fontSize = 16,
+    int bpp = 2,
+  }) async {
     if (state.isPushing) {
       return 0;
     }
@@ -189,7 +207,25 @@ class SwitchHubController extends StateNotifier<SwitchHubState> {
     try {
       for (final device in targets) {
         try {
+          // Push configuration first
           await _bleService.pushConfig(device, config);
+
+          // Generate and push font data if requested
+          if (includeFontGeneration) {
+            await _bleService.generateAndPushFontData(
+              device,
+              config,
+              fontSize: fontSize,
+              bpp: bpp,
+              onProgress: (current, total) {
+                state = state.copyWith(
+                  statusMessage:
+                      '字库推送中 (${device.remoteId.str}): $current/$total',
+                );
+              },
+            );
+          }
+
           successCount++;
         } catch (_) {}
       }
@@ -199,10 +235,7 @@ class SwitchHubController extends StateNotifier<SwitchHubState> {
       );
       return successCount;
     } catch (error) {
-      state = state.copyWith(
-        isPushing: false,
-        errorMessage: '批量推送失败: $error',
-      );
+      state = state.copyWith(isPushing: false, errorMessage: '批量推送失败: $error');
       return successCount;
     }
   }
@@ -240,7 +273,8 @@ class SwitchHubController extends StateNotifier<SwitchHubState> {
     }
     final platformName = result.device.platformName;
     final advName = adv.advName ?? '';
-    final normalizedName = (advName.isNotEmpty ? advName : platformName).toLowerCase();
+    final normalizedName = (advName.isNotEmpty ? advName : platformName)
+        .toLowerCase();
     return normalizedName.contains('switchhub');
   }
 
@@ -264,8 +298,9 @@ class SwitchHubController extends StateNotifier<SwitchHubState> {
   }
 
   static final Guid _switchHubServiceGuid = SwitchHubBleService.serviceUuid;
-  static final Guid _switchHubServiceGuidReversed =
-      reverseBleUuid(SwitchHubBleService.serviceUuid.str);
+  static final Guid _switchHubServiceGuidReversed = reverseBleUuid(
+    SwitchHubBleService.serviceUuid.str,
+  );
 
   @override
   void dispose() {
@@ -275,6 +310,8 @@ class SwitchHubController extends StateNotifier<SwitchHubState> {
 }
 
 final switchHubControllerProvider =
-    StateNotifierProvider.autoDispose<SwitchHubController, SwitchHubState>((ref) {
-  return SwitchHubController(ref);
-});
+    StateNotifierProvider.autoDispose<SwitchHubController, SwitchHubState>((
+      ref,
+    ) {
+      return SwitchHubController(ref);
+    });

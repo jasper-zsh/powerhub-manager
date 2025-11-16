@@ -42,6 +42,14 @@ class _SwitchHubSyncSheetState extends State<SwitchHubSyncSheet> {
   String? _scanError;
   String? _syncingDeviceId;
 
+  // Font generation options
+  bool _includeFontGeneration = true;
+  int _fontSize = 16;
+  int _bpp = 2;
+  double _fontProgress = 0.0;
+  bool _isGeneratingFont = false;
+  Map<String, dynamic>? _fontInfo;
+
   @override
   void dispose() {
     FlutterBluePlus.stopScan();
@@ -90,6 +98,8 @@ class _SwitchHubSyncSheetState extends State<SwitchHubSyncSheet> {
                     ),
                     const SizedBox(height: 12),
                     _buildJsonPreview(theme),
+                    const SizedBox(height: 12),
+                    _buildFontOptions(theme),
                     const SizedBox(height: 12),
                     Row(
                       children: [
@@ -157,7 +167,30 @@ class _SwitchHubSyncSheetState extends State<SwitchHubSyncSheet> {
                     else
                       ..._devices.map(_buildDeviceTile),
                     const SizedBox(height: 12),
-                    if (_statusMessage != null)
+                    if (_isGeneratingFont)
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '字库生成中...',
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: theme.colorScheme.primary,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          LinearProgressIndicator(value: _fontProgress),
+                          if (_fontInfo != null) ...[
+                            const SizedBox(height: 4),
+                            Text(
+                              '字符数: ${_fontInfo!['characterCount']} | '
+                              '字体大小: ${_fontInfo!['fontSize']}px | '
+                              '二进制大小: ${(_fontInfo!['binarySize'] / 1024).toStringAsFixed(1)}KB',
+                              style: theme.textTheme.bodySmall,
+                            ),
+                          ],
+                        ],
+                      ),
+                    if (_statusMessage != null && !_isGeneratingFont)
                       Text(
                         _statusMessage!,
                         style: theme.textTheme.bodySmall?.copyWith(
@@ -191,6 +224,86 @@ class _SwitchHubSyncSheetState extends State<SwitchHubSyncSheet> {
               style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
             ),
           ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFontOptions(ThemeData theme) {
+    return Card(
+      elevation: 0,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Checkbox(
+                  value: _includeFontGeneration,
+                  onChanged: (value) {
+                    setState(() {
+                      _includeFontGeneration = value ?? false;
+                    });
+                  },
+                ),
+                const Text('同时生成并推送字库'),
+                const Spacer(),
+                if (_includeFontGeneration)
+                  TextButton.icon(
+                    icon: const Icon(Icons.info_outline),
+                    label: const Text('字库信息'),
+                    onPressed: _showFontInfo,
+                  ),
+              ],
+            ),
+            if (_includeFontGeneration) ...[
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('字体大小: $_fontSize px'),
+                        Slider(
+                          value: _fontSize.toDouble(),
+                          min: 12,
+                          max: 32,
+                          divisions: 20,
+                          onChanged: (value) {
+                            setState(() {
+                              _fontSize = value.round();
+                            });
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('抗锯齿: ${_bpp} bpp'),
+                        Slider(
+                          value: _bpp.toDouble(),
+                          min: 1,
+                          max: 4,
+                          divisions: 3,
+                          onChanged: (value) {
+                            setState(() {
+                              _bpp = value.round();
+                            });
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ],
         ),
       ),
     );
@@ -428,14 +541,28 @@ class _SwitchHubSyncSheetState extends State<SwitchHubSyncSheet> {
       _isSyncing = true;
       _syncingDeviceId = result.device.remoteId.str;
       _statusMessage = '正在同步 ${result.device.platformName}…';
+      _isGeneratingFont = false;
+      _fontProgress = 0.0;
     });
     try {
       await widget.provider.pushSceneToSwitchHub(
         widget.scene.id,
         device: result.device,
+        includeFontGeneration: _includeFontGeneration,
+        fontSize: _fontSize,
+        bpp: _bpp,
+        onFontProgress: (current, total) {
+          if (mounted) {
+            setState(() {
+              _isGeneratingFont = true;
+              _fontProgress = current / total;
+            });
+          }
+        },
       );
       if (mounted) {
         setState(() {
+          _isGeneratingFont = false;
           _statusMessage =
               '同步成功：${result.device.platformName.isEmpty ? result.device.remoteId.str : result.device.platformName}';
         });
@@ -443,6 +570,7 @@ class _SwitchHubSyncSheetState extends State<SwitchHubSyncSheet> {
     } catch (error) {
       if (mounted) {
         setState(() {
+          _isGeneratingFont = false;
           _statusMessage = '同步失败: $error';
         });
       }
@@ -451,11 +579,65 @@ class _SwitchHubSyncSheetState extends State<SwitchHubSyncSheet> {
         setState(() {
           _isSyncing = false;
           _syncingDeviceId = null;
+          _isGeneratingFont = false;
         });
       } else {
         _isSyncing = false;
         _syncingDeviceId = null;
+        _isGeneratingFont = false;
       }
+    }
+  }
+
+  Future<void> _showFontInfo() async {
+    try {
+      final fontInfo = await widget.provider.getFontInfoForScene(
+        widget.scene.id,
+        fontSize: _fontSize,
+        bpp: _bpp,
+      );
+
+      if (!mounted) return;
+
+      setState(() {
+        _fontInfo = fontInfo;
+      });
+
+      showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('字库信息'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('字符数量: ${fontInfo['characterCount']}'),
+              Text('字体大小: ${fontInfo['fontSize']} px'),
+              Text('抗锯齿: ${fontInfo['bpp']} bpp'),
+              Text(
+                '二进制大小: ${(fontInfo['binarySize'] / 1024).toStringAsFixed(1)} KB',
+              ),
+              Text('包含常用字符: ${fontInfo['includesCommonChars'] ? '是' : '否'}'),
+              const SizedBox(height: 8),
+              Text('字体指标:'),
+              Text('  上升高度: ${fontInfo['ascent']}'),
+              Text('  下降高度: ${fontInfo['descent']}'),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('关闭'),
+            ),
+          ],
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('获取字库信息失败: $error')));
     }
   }
 

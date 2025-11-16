@@ -8,6 +8,7 @@ import 'package:app/models/control_command/set_command.dart';
 import 'package:app/services/storage_service.dart';
 import 'package:app/services/ble_service.dart';
 import 'package:app/services/switch_hub_ble_service.dart';
+import 'package:app/services/font_generation_service.dart';
 import 'package:app/models/switch_hub/sequence_item.dart';
 import 'package:app/models/switch_hub/state_context.dart';
 import 'package:app/models/switch_hub/config.dart';
@@ -524,9 +525,61 @@ class OrchestrationProvider with ChangeNotifier {
     String sceneId, {
     required BluetoothDevice device,
     int schemaVersion = 1,
+    bool includeFontGeneration = true,
+    int fontSize = 16,
+    int bpp = 2,
+    Function(int current, int total)? onFontProgress,
   }) async {
     final config = buildSwitchHubConfig(sceneId, schemaVersion: schemaVersion);
+
+    // Push configuration first
     await _switchHubBleService.pushConfig(device, config);
+
+    // Generate and push font data if requested
+    if (includeFontGeneration) {
+      await _switchHubBleService.generateAndPushFontData(
+        device,
+        config,
+        fontSize: fontSize,
+        bpp: bpp,
+        onProgress: onFontProgress,
+      );
+    }
+  }
+
+  /// Push font data only (without configuration)
+  Future<void> pushFontDataToSwitchHub(
+    String sceneId, {
+    required BluetoothDevice device,
+    int fontSize = 16,
+    int bpp = 2,
+    Function(int current, int total)? onProgress,
+  }) async {
+    final config = buildSwitchHubConfig(sceneId, schemaVersion: 1);
+
+    await _switchHubBleService.generateAndPushFontData(
+      device,
+      config,
+      fontSize: fontSize,
+      bpp: bpp,
+      onProgress: onProgress,
+    );
+  }
+
+  /// Get font information for a scene
+  Future<Map<String, dynamic>> getFontInfoForScene(
+    String sceneId, {
+    int fontSize = 16,
+    int bpp = 2,
+  }) async {
+    final config = buildSwitchHubConfig(sceneId, schemaVersion: 1);
+
+    return await FontGenerationService.getFontInfo(
+      config,
+      fontSize: fontSize,
+      bpp: bpp,
+      includeCommonChars: true,
+    );
   }
 
   Future<void> recordExecution({
