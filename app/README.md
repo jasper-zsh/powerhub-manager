@@ -61,16 +61,14 @@ flutter run
 
 ### Project Structure Highlights
 
-- `lib/providers/app_state_provider.dart` – Central state management,
-  auto-reconnect scheduling, and saved controller workflows.
+- `lib/controllers/connection_session_controller.dart` – Centralized BLE
+  session lifecycle, telemetry activation, and health monitoring.
 - `lib/services/ble_service.dart` – BLE scanning, connection handling, and
   characteristic IO utilities.
 - `lib/services/storage_service.dart` – Shared preferences-based persistence
   for presets and saved controllers.
 - `lib/widgets/saved_controller_list.dart` – Saved controller list component
   with inline management controls and status chips.
-- `lib/providers/device_control_provider.dart` – Bridges manual controller
-  control callbacks to the UI while tracking busy state and selections.
 - `lib/screens/orchestration_screen.dart` – Toggle-focused automation builder
   with command preview and execution log access.
 - `lib/screens/device_control_screen.dart` – Manual controller adjustment

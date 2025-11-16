@@ -1,4 +1,3 @@
-import 'package:app/models/connection_status_record.dart';
 import 'package:app/models/saved_controller.dart';
 import 'package:flutter/material.dart';
 
@@ -10,7 +9,6 @@ class SavedControllerList extends StatelessWidget {
     this.emptyState,
     this.onRename,
     this.onRemove,
-    this.statusRecords,
   });
 
   final List<SavedController> controllers;
@@ -18,7 +16,6 @@ class SavedControllerList extends StatelessWidget {
   final Widget? emptyState;
   final void Function(SavedController controller)? onRename;
   final void Function(SavedController controller)? onRemove;
-  final Map<String, ConnectionStatusRecord>? statusRecords;
 
   @override
   Widget build(BuildContext context) {
@@ -35,7 +32,6 @@ class SavedControllerList extends StatelessWidget {
       separatorBuilder: (_, __) => const Divider(height: 1),
       itemBuilder: (context, index) {
         final controller = controllers[index];
-        final record = statusRecords?[controller.controllerId];
         return ListTile(
           title: Text(controller.alias),
           subtitle: Column(
@@ -46,7 +42,7 @@ class SavedControllerList extends StatelessWidget {
                 style: Theme.of(context).textTheme.bodySmall,
               ),
               const SizedBox(height: 4),
-              _buildStatusWrap(controller, record),
+              _buildStatusWrap(controller),
             ],
           ),
           trailing: _buildTrailingActions(controller),
@@ -56,34 +52,10 @@ class SavedControllerList extends StatelessWidget {
     );
   }
 
-  Widget _buildStatusWrap(
-    SavedController controller,
-    ConnectionStatusRecord? record,
-  ) {
+  Widget _buildStatusWrap(SavedController controller) {
     final chips = <Widget>[
       _connectionStatusChip(controller.connectionStatus),
     ];
-
-    if (record != null) {
-      if (record.scanState == ScanState.scanning) {
-        chips.add(_infoChip('Scanning', Colors.indigo));
-      } else if (record.scanState == ScanState.waitingRetry) {
-        chips.add(_infoChip('Retry scheduled', Colors.orange));
-      }
-
-      if (record.retryAttempts > 0 &&
-          controller.connectionStatus !=
-              SavedControllerConnectionStatus.connected) {
-        chips.add(
-          _infoChip('Attempts ${record.retryAttempts}', Colors.deepOrange),
-        );
-      }
-
-      if (record.lastResult == LastScanResult.error &&
-          record.errorReason != null) {
-        chips.add(_infoChip('Error', Colors.redAccent));
-      }
-    }
 
     return Wrap(
       spacing: 8,
@@ -147,13 +119,6 @@ class SavedControllerList extends StatelessWidget {
     );
   }
 
-  Widget _infoChip(String label, Color color) {
-    return Chip(
-      label: Text(label),
-      backgroundColor: color.withOpacity(0.1),
-      labelStyle: TextStyle(color: color.darken()),
-    );
-  }
 }
 
 extension _ColorBrightness on Color {

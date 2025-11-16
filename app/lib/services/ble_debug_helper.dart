@@ -1,15 +1,21 @@
 import 'package:flutter/foundation.dart';
+import 'package:flutter_blue_plus/flutter_blue_plus.dart';
+import 'package:app/utils/ble_uuid.dart';
 
 class BLEDebugHelper {
-  static void logDeviceScan(List<String> serviceUuids, String deviceName) {
+  static final Guid _powerHubServiceGuid =
+      parseBleUuid('119B5F1B-1C7A-3E8E-6147-672F-0100-0B5E');
+  static final Guid _powerHubLegacyServiceGuid =
+      parseBleUuid('5e0b0001-6f72-4761-8e3e-7a1c1b5f9b11');
+
+  static void logDeviceScan(Iterable<Guid> serviceUuids, String deviceName) {
     debugPrint('=== BLE Device Scan Debug ===');
     debugPrint('Device Name: $deviceName');
-    debugPrint('Service UUIDs: ${serviceUuids.join(', ')}');
+    debugPrint('Service UUIDs: ${serviceUuids.map((u) => u.str).join(', ')}');
 
-    final hasNewService = serviceUuids.any((uuid) =>
-        _normalizeUuid(uuid) == _normalizeUuid('119B5F1B-1C7A-3E8E-6147-672F-0100-0B5E'));
-    final hasLegacyService = serviceUuids.any((uuid) =>
-        _normalizeUuid(uuid) == _normalizeUuid('5e0b0001-6f72-4761-8e3e-7a1c1b5f9b11'));
+    final hasNewService = serviceUuids.any((uuid) => uuid == _powerHubServiceGuid);
+    final hasLegacyService =
+        serviceUuids.any((uuid) => uuid == _powerHubLegacyServiceGuid);
 
     debugPrint('Has New Service UUID: $hasNewService');
     debugPrint('Has Legacy Service UUID: $hasLegacyService');
@@ -17,18 +23,18 @@ class BLEDebugHelper {
     debugPrint('============================');
   }
 
-  static void logServiceDiscovery(List<String> discoveredServices) {
+  static void logServiceDiscovery(Iterable<Guid> discoveredServices) {
     debugPrint('=== BLE Service Discovery Debug ===');
-    debugPrint('Discovered ${discoveredServices.length} services:');
+    final services = discoveredServices.toList();
+    debugPrint('Discovered ${services.length} services:');
 
-    for (int i = 0; i < discoveredServices.length; i++) {
-      final service = discoveredServices[i];
-      final normalized = _normalizeUuid(service);
-      final isNewService = normalized == _normalizeUuid('119B5F1B-1C7A-3E8E-6147-672F-0100-0B5E');
-      final isLegacyService = normalized == _normalizeUuid('5e0b0001-6f72-4761-8e3e-7a1c1b5f9b11');
+    for (int i = 0; i < services.length; i++) {
+      final service = services[i];
+      final isNewService = service == _powerHubServiceGuid;
+      final isLegacyService = service == _powerHubLegacyServiceGuid;
 
-      debugPrint('  Service $i: $service');
-      debugPrint('    Normalized: $normalized');
+      debugPrint('  Service $i: ${service.str}');
+      debugPrint('    Normalized: ${service.toString()}');
       debugPrint('    Is New Service: $isNewService');
       debugPrint('    Is Legacy Service: $isLegacyService');
       debugPrint('    Supported: ${isNewService || isLegacyService}');
@@ -63,7 +69,4 @@ class BLEDebugHelper {
     debugPrint('============================');
   }
 
-  static String _normalizeUuid(String uuid) {
-    return uuid.toLowerCase().replaceAll('-', '');
-  }
 }

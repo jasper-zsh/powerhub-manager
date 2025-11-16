@@ -26,10 +26,13 @@ class SwitchHubSyncSheet extends StatefulWidget {
 }
 
 class _SwitchHubSyncSheetState extends State<SwitchHubSyncSheet> {
-  late final config =
-      widget.provider.buildSwitchHubConfig(widget.scene.id, schemaVersion: 1);
-  late final String _jsonPreview =
-      const JsonEncoder.withIndent('  ').convert(config.toJson());
+  late final config = widget.provider.buildSwitchHubConfig(
+    widget.scene.id,
+    schemaVersion: 1,
+  );
+  late final String _jsonPreview = const JsonEncoder.withIndent(
+    '  ',
+  ).convert(config.toJson());
 
   List<ScanResult> _devices = <ScanResult>[];
   StreamSubscription<List<ScanResult>>? _scanSubscription;
@@ -50,8 +53,7 @@ class _SwitchHubSyncSheetState extends State<SwitchHubSyncSheet> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final viewInsets = MediaQuery.of(context).viewInsets;
-    final controllerIds = widget.scene.referencedControllers.toList()
-      ..sort();
+    final controllerIds = widget.scene.referencedControllers.toList()..sort();
 
     return SafeArea(
       child: Padding(
@@ -62,14 +64,14 @@ class _SwitchHubSyncSheetState extends State<SwitchHubSyncSheet> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 12,
+                ),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text(
-                      'SwitchHub 编排导出',
-                      style: theme.textTheme.titleMedium,
-                    ),
+                    Text('SwitchHub 编排导出', style: theme.textTheme.titleMedium),
                     IconButton(
                       icon: const Icon(Icons.close),
                       onPressed: () => Navigator.of(context).pop(),
@@ -113,10 +115,7 @@ class _SwitchHubSyncSheetState extends State<SwitchHubSyncSheet> {
                       ],
                     ),
                     const SizedBox(height: 16),
-                    Text(
-                      '涉及控制器',
-                      style: theme.textTheme.titleSmall,
-                    ),
+                    Text('涉及控制器', style: theme.textTheme.titleSmall),
                     const SizedBox(height: 8),
                     if (controllerIds.isEmpty)
                       const Text('暂无控制器引用。')
@@ -243,9 +242,9 @@ class _SwitchHubSyncSheetState extends State<SwitchHubSyncSheet> {
     if (!mounted) {
       return;
     }
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('SwitchHub JSON 已复制。')),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('SwitchHub JSON 已复制。')));
   }
 
   Future<void> _startScan() async {
@@ -294,34 +293,51 @@ class _SwitchHubSyncSheetState extends State<SwitchHubSyncSheet> {
       });
     });
 
+    StreamSubscription<bool>? scanStateSub;
     try {
       debugPrint(
-        '[SwitchHubScan] Starting scan (no filter) for service ${SwitchHubBleService.serviceUuid}',
+        '[SwitchHubScan] Starting scan (filtered) for service ${SwitchHubBleService.serviceUuid}',
       );
       await FlutterBluePlus.startScan(
         timeout: const Duration(seconds: 8),
         androidUsesFineLocation: true,
+        withServices: [SwitchHubBleService.serviceUuid],
       );
       debugPrint('[SwitchHubScan] Scan started');
+
+      scanStateSub = FlutterBluePlus.isScanning.listen((isScanning) {
+        debugPrint('[SwitchHubScan] isScanning=$isScanning');
+        if (!isScanning) {
+          scanStateSub?.cancel();
+          scanStateSub = null;
+          _finishScan();
+        }
+      });
+
+      // Wait until scanning stops (either timeout or explicit stop).
+      await FlutterBluePlus.isScanning.firstWhere((isScanning) => !isScanning);
     } catch (error) {
+      await scanStateSub?.cancel();
+      _finishScan();
       if (mounted) {
         setState(() {
           _scanError = '扫描失败: $error';
         });
       }
       debugPrint('[SwitchHubScan] Scan error: $error');
-    } finally {
-      await FlutterBluePlus.stopScan();
-      debugPrint('[SwitchHubScan] Scan stopped');
-      await _scanSubscription?.cancel();
-      _scanSubscription = null;
-      if (mounted) {
-        setState(() {
-          _isScanning = false;
-        });
-      } else {
+    }
+  }
+
+  void _finishScan() {
+    debugPrint('[SwitchHubScan] Scan stopped');
+    unawaited(_scanSubscription?.cancel());
+    _scanSubscription = null;
+    if (mounted) {
+      setState(() {
         _isScanning = false;
-      }
+      });
+    } else {
+      _isScanning = false;
     }
   }
 
@@ -331,11 +347,11 @@ class _SwitchHubSyncSheetState extends State<SwitchHubSyncSheet> {
       if (!supported) {
         if (mounted) {
           setState(() {
-          _scanError = '当前设备不支持 BLE';
-        });
-      }
-      debugPrint('[SwitchHubScan] BLE not supported');
-      return false;
+            _scanError = '当前设备不支持 BLE';
+          });
+        }
+        debugPrint('[SwitchHubScan] BLE not supported');
+        return false;
       }
 
       final statuses = await <Permission>[
@@ -363,7 +379,9 @@ class _SwitchHubSyncSheetState extends State<SwitchHubSyncSheet> {
             _scanError = '需要开启系统定位服务以扫描 BLE 设备';
           });
         }
-        debugPrint('[SwitchHubScan] location service status: $locationServiceStatus');
+        debugPrint(
+          '[SwitchHubScan] location service status: $locationServiceStatus',
+        );
         return false;
       }
 
@@ -391,15 +409,11 @@ class _SwitchHubSyncSheetState extends State<SwitchHubSyncSheet> {
   }
 
   bool _matchesSwitchHub(ScanResult result) {
-    final target =
-        SwitchHubBleService.serviceUuid.toLowerCase().replaceAll('-', '');
-    final targetReversed = _reverseUuidBytes(target);
-    for (final uuid in result.advertisementData.serviceUuids) {
-      final normalized = uuid.toString().toLowerCase().replaceAll('-', '');
-      if (normalized == target || normalized == targetReversed) {
-        debugPrint('[SwitchHubScan] match by UUID ${uuid.toString()}');
-        return true;
-      }
+    if (result.advertisementData.serviceUuids.contains(
+      SwitchHubBleService.serviceUuid,
+    )) {
+      debugPrint('[SwitchHubScan] matched by service UUID');
+      return true;
     }
     final name = result.device.platformName.toLowerCase();
     if (name.contains('switchhub')) {
@@ -407,15 +421,6 @@ class _SwitchHubSyncSheetState extends State<SwitchHubSyncSheet> {
       return true;
     }
     return false;
-  }
-
-  String _reverseUuidBytes(String normalized) {
-    final buffer = StringBuffer();
-    for (var i = normalized.length; i > 0; i -= 2) {
-      final start = (i - 2).clamp(0, normalized.length - 2).toInt();
-      buffer.write(normalized.substring(start, start + 2));
-    }
-    return buffer.toString();
   }
 
   Future<void> _syncToDevice(ScanResult result) async {
@@ -431,7 +436,8 @@ class _SwitchHubSyncSheetState extends State<SwitchHubSyncSheet> {
       );
       if (mounted) {
         setState(() {
-          _statusMessage = '同步成功：${result.device.platformName.isEmpty ? result.device.remoteId.str : result.device.platformName}';
+          _statusMessage =
+              '同步成功：${result.device.platformName.isEmpty ? result.device.remoteId.str : result.device.platformName}';
         });
       }
     } catch (error) {

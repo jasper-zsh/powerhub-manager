@@ -5,6 +5,7 @@ import 'package:app/models/pwm_controller.dart';
 import 'package:app/models/saved_controller.dart';
 import 'package:app/screens/channel_control_screen.dart';
 import 'package:app/screens/telemetry_settings_screen.dart';
+import 'package:app/screens/switch_hub_screen.dart';
 import 'package:app/widgets/connection_status.dart';
 import 'package:app/widgets/saved_controller_list.dart';
 import 'package:app/controllers/discovery_controller.dart';
@@ -240,6 +241,26 @@ class HomeScreen extends ConsumerWidget {
                     }
                   : null,
               child: const Text('Channel Control'),
+            ),
+          ),
+          const SizedBox(height: 16),
+          SizedBox(
+            width: 200,
+            child: ElevatedButton.icon(
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const SwitchHubScreen(),
+                  ),
+                );
+              },
+              icon: const Icon(Icons.settings_remote),
+              label: const Text('SwitchHub 管理'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.orange,
+                foregroundColor: Colors.white,
+              ),
             ),
           ),
         ],

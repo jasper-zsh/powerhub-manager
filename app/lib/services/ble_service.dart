@@ -10,6 +10,7 @@ import 'package:app/models/telemetry.dart';
 import 'package:app/models/power_management.dart';
 import 'package:app/models/monitoring_data.dart';
 import 'package:app/services/ble_debug_helper.dart';
+import 'package:app/utils/ble_uuid.dart';
 
 // For debugging
 import 'package:flutter/foundation.dart';
@@ -53,44 +54,15 @@ class BLEService {
   bool _connectionHealthy = true;
   StreamSubscription<BluetoothConnectionState>? _deviceStateSubscription;
 
-  /// Normalises UUID strings so that short (16-bit/32-bit) and full (128-bit)
-  /// values can be compared reliably. The ESP32 advertises 16-bit UUIDs (e.g.
-  /// `fff0`), while the application stores 128-bit forms. Converting both to a
-  /// 32-character hex string without dashes keeps comparisons consistent.
-  String _normalizeUuid(String uuid) {
-    final cleaned = uuid.toLowerCase().replaceAll('-', '');
-
-    if (cleaned.length == 4) {
-      // Expand 16-bit UUID to the Bluetooth base UUID form.
-      return '0000${cleaned}00001000800000805f9b34fb';
-    }
-
-    if (cleaned.length == 8) {
-      // Expand 32-bit UUID to the Bluetooth base UUID form.
-      return '${cleaned}00001000800000805f9b34fb';
-    }
-
-    if (cleaned.length == 32) {
-      return cleaned;
-    }
-
-    // Fall back to the cleaned string if it is an unexpected length.
-    return cleaned;
-  }
-
   BluetoothCharacteristic? _findCharacteristic(String targetUuid) {
     if (_service == null) {
       return null;
     }
 
-    final normalizedTarget = _normalizeUuid(targetUuid);
+    final targetGuid = parseBleUuid(targetUuid);
 
     for (final characteristic in _service!.characteristics) {
-      final normalizedCharacteristic = _normalizeUuid(
-        characteristic.uuid.toString(),
-      );
-
-      if (normalizedCharacteristic == normalizedTarget) {
+      if (characteristic.uuid == targetGuid) {
         return characteristic;
       }
     }
@@ -132,25 +104,25 @@ class BLEService {
     await for (List<ScanResult> results in FlutterBluePlus.scanResults) {
       debugPrint('Received ${results.length} scan results');
 
+      final targetGuid = parseBleUuid(serviceUuid);
+      final targetReversedGuid = parseBleUuid(serviceUuidReversed);
+
       for (ScanResult r in results) {
         debugPrint('Device: ${r.device.platformName} (${r.device.remoteId.str})');
         debugPrint('  RSSI: ${r.rssi}');
         debugPrint(
-          '  Service UUIDs: ${r.advertisementData.serviceUuids.map((u) => u.toString()).join(', ')}',
+          '  Service UUIDs: ${r.advertisementData.serviceUuids.map((u) => u.str).join(', ')}',
         );
 
         // Debug logging for device discovery
         BLEDebugHelper.logDeviceScan(
-          r.advertisementData.serviceUuids.map((u) => u.toString()).toList(),
+          r.advertisementData.serviceUuids,
           r.device.platformName,
         );
 
         // Check if the device advertises our service UUID (normalize both sides)
         bool hasService = r.advertisementData.serviceUuids.any((uuid) {
-          final adv = _normalizeUuid(uuid.toString());
-          final target = _normalizeUuid(serviceUuid);
-          final targetReversed = _normalizeUuid(serviceUuidReversed);
-          final matches = adv == target || adv == targetReversed;
+          final matches = uuid == targetGuid || uuid == targetReversedGuid;
           if (matches) {
             debugPrint('  MATCH: Found our service UUID!');
           }
@@ -358,21 +330,18 @@ class BLEService {
     _service = null; // Reset service reference
 
     // Debug logging for service discovery
-    final discoveredServiceUuids = services.map((s) => s.uuid.toString()).toList();
+    final discoveredServiceUuids = services.map((s) => s.uuid).toList();
     BLEDebugHelper.logServiceDiscovery(discoveredServiceUuids);
+    final targetGuid = parseBleUuid(serviceUuid);
+    final targetReversedGuid = parseBleUuid(serviceUuidReversed);
 
     for (BluetoothService service in services) {
       debugPrint('  Service: ${service.uuid}');
-      final normalizedService = _normalizeUuid(service.uuid.toString());
-
-      // Check if this service matches our service UUID (handle byte order differences)
-      final target = _normalizeUuid(serviceUuid);
-      final targetReversed = _normalizeUuid(serviceUuidReversed);
-      if (normalizedService == target) {
+      if (service.uuid == targetGuid) {
         debugPrint('  Found our service!');
         _service = service;
         break;
-      } else if (normalizedService == targetReversed) {
+      } else if (service.uuid == targetReversedGuid) {
         debugPrint('  Found our service! (reversed byte order)');
         _service = service;
         break;

@@ -41,9 +41,6 @@ dependencies:
   # BLE library for communication with ESP32
   flutter_blue_plus: ^1.31.14
   
-  # State management
-  provider: ^6.1.2
-  
   # Local data persistence
   shared_preferences: ^2.3.2
   

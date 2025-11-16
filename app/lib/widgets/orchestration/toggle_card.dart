@@ -37,55 +37,91 @@ class ToggleCard extends StatelessWidget {
     return Card(
       elevation: 1,
       margin: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Toggle: $toggleId',
+                  toggleId,
                   style: theme.textTheme.titleMedium,
                 ),
-                SegmentedButton<String>(
-                  segments: states
-                      .map(
-                        (state) => ButtonSegment<String>(
-                          value: state.stateId,
-                          label: Text(state.label),
-                        ),
-                      )
-                      .toList(),
-                  selected: <String>{currentState.stateId},
-                  onSelectionChanged: (selection) {
-                    if (selection.isNotEmpty) {
-                      onStateChanged(selection.first);
-                    }
-                  },
+                const SizedBox(height: 4),
+                Text(
+                  '${states.length} 状态 · ${currentState.commandBundles.length} 个命令组合',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.textTheme.bodySmall?.color?.withOpacity(0.7),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                _StateSelector(
+                  states: states,
+                  selectedStateId: currentState.stateId,
+                  onStateChanged: onStateChanged,
                 ),
               ],
             ),
-            const SizedBox(height: 12),
-            _CommandBundleList(
-              bundles: currentState.commandBundles,
-              onEdit: onEditBundle,
-              controllerAliases: controllerAliases,
-              missingControllers: missingControllers,
-            ),
-            if (onAddCommandBundle != null)
-              Align(
-                alignment: Alignment.centerRight,
-                child: TextButton.icon(
-                  onPressed: onAddCommandBundle,
-                  icon: const Icon(Icons.add),
-                  label: const Text('Add Command Bundle'),
+          ),
+          const Divider(height: 1),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _CommandBundleList(
+                  bundles: currentState.commandBundles,
+                  onEdit: onEditBundle,
+                  controllerAliases: controllerAliases,
+                  missingControllers: missingControllers,
                 ),
-              ),
-          ],
-        ),
+                if (onAddCommandBundle != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 12),
+                    child: Align(
+                      alignment: Alignment.centerRight,
+                      child: OutlinedButton.icon(
+                        onPressed: onAddCommandBundle,
+                        icon: const Icon(Icons.add),
+                        label: const Text('新增命令组合'),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ],
       ),
+    );
+  }
+}
+
+class _StateSelector extends StatelessWidget {
+  const _StateSelector({
+    required this.states,
+    required this.selectedStateId,
+    required this.onStateChanged,
+  });
+
+  final List<ToggleState> states;
+  final String selectedStateId;
+  final ToggleStateChanged onStateChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: states.map((state) {
+        final isSelected = state.stateId == selectedStateId;
+        return ChoiceChip(
+          label: Text(state.label),
+          selected: isSelected,
+          onSelected: (_) => onStateChanged(state.stateId),
+        );
+      }).toList(growable: false),
     );
   }
 }
@@ -110,48 +146,61 @@ class _CommandBundleList extends StatelessWidget {
     }
 
     return Column(
-      children: bundles
-          .map(
-            (bundle) => ListTile(
-              contentPadding: EdgeInsets.zero,
-              title: Text(bundle.label),
-              subtitle: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    '${bundle.actions.length} action(s) • Enabled: ${bundle.isEnabled ? 'Yes' : 'No'}',
-                  ),
-                  ...bundle.actions.take(2).map((action) {
-                    final alias = controllerAliases[action.controllerId];
-                    final controllerLabel = alias != null
-                        ? '${action.controllerId} ($alias)'
-                        : action.controllerId;
-                    final description = action.type ==
-                            CommandActionType.channelValue
-                        ? 'Set channel ${action.channel} to ${action.value}'
-                        : 'Trigger preset ${action.presetId}';
-                    final isMissing =
-                        missingControllers.contains(action.controllerId);
-                    return Text(
-                      '$controllerLabel → $description',
-                      style: isMissing
-                          ? const TextStyle(color: Colors.orange)
-                          : null,
-                    );
-                  }),
-                  if (bundle.actions.length > 2)
-                    Text('… +${bundle.actions.length - 2} more'),
-                ],
-              ),
-              trailing: onEdit != null
-                  ? IconButton(
-                      icon: const Icon(Icons.edit),
-                      onPressed: () => onEdit!(bundle),
-                    )
-                  : null,
+      children: bundles.map((bundle) {
+        final subtitle = <Widget>[
+          Text(
+            '${bundle.actions.length} 个动作 · '
+            '状态: ${bundle.isEnabled ? '启用' : '停用'}',
+          ),
+          ...bundle.actions.take(2).map((action) {
+            final alias = controllerAliases[action.controllerId];
+            final controllerLabel =
+                alias != null ? '${action.controllerId} ($alias)' : action.controllerId;
+            final description = action.type == CommandActionType.channelValue
+                ? '通道 ${action.channel} → ${action.value}'
+                : '触发预设 ${action.presetId}';
+            final isMissing = missingControllers.contains(action.controllerId);
+            return Text(
+              '$controllerLabel · $description',
+              style: isMissing ? const TextStyle(color: Colors.orange) : null,
+            );
+          }).toList(),
+          if (bundle.actions.length > 2)
+            Text('… 另有 ${bundle.actions.length - 2} 个动作'),
+        ];
+
+        return Container(
+          margin: const EdgeInsets.only(bottom: 12),
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: Theme.of(context).colorScheme.outlineVariant,
             ),
-          )
-          .toList(),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(bundle.label, style: Theme.of(context).textTheme.titleSmall),
+                    const SizedBox(height: 4),
+                    ...subtitle,
+                  ],
+                ),
+              ),
+              if (onEdit != null)
+                IconButton(
+                  icon: const Icon(Icons.edit),
+                  onPressed: () => onEdit!(bundle),
+                  tooltip: '编辑命令组合',
+                ),
+            ],
+          ),
+        );
+      }).toList(),
     );
   }
 }

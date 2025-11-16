@@ -105,6 +105,7 @@ class OrchestrationProvider with ChangeNotifier {
         ..addAll(loadedScenes);
       _logs = loadedLogs;
       _activeScene = _scenes.isNotEmpty ? _scenes.first : null;
+
       _errorMessage = null;
     } catch (error) {
       _errorMessage = 'Failed to load orchestration data: $error';
@@ -514,9 +515,9 @@ class OrchestrationProvider with ChangeNotifier {
     notifyListeners();
   }
   Future<bool> executeCommands(CommandPreviewResult preview) async {
+    // SwitchHub 设备会在硬件端执行多目标编排逻辑，App 仅保留单设备执行能力以兼容旧流程。
     try {
       bool hasErrors = false;
-
       for (final action in preview.actions) {
         try {
           switch (action.type) {
@@ -527,9 +528,7 @@ class OrchestrationProvider with ChangeNotifier {
               );
               await _bleService.sendSetCommand(command);
               break;
-            
             case CommandActionType.presetTrigger:
-              // Preset functionality has been removed
               debugPrint('Preset trigger action is no longer supported');
               break;
           }
@@ -538,7 +537,6 @@ class OrchestrationProvider with ChangeNotifier {
           debugPrint('Failed to execute action for controller ${action.controllerId}: $e');
         }
       }
-
       return !hasErrors;
     } catch (e) {
       debugPrint('Failed to execute commands: $e');
@@ -546,6 +544,7 @@ class OrchestrationProvider with ChangeNotifier {
     }
   }
 
+  
   Future<void> clearLogs() async {
     await _storage.clearExecutionLogs();
     _logs = [];
