@@ -139,7 +139,7 @@ class FontExtractionService {
   /// Combine extracted characters with common characters
   static Set<String> getCharacterSet(
     SwitchHubConfig config, {
-    bool includeCommonChars = true,
+    bool includeCommonChars = false,
   }) {
     final extractedChars = extractUniqueCharacters(config);
 

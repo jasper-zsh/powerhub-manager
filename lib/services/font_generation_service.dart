@@ -2,20 +2,17 @@ import 'dart:typed_data';
 import 'dart:io';
 import 'package:flutter/services.dart';
 import 'package:app/services/font_extraction_service.dart';
-import 'package:app/services/font_converter/font_converter_service.dart';
-import 'package:app/services/font_converter/ttf_parser.dart';
-import 'package:app/services/font_converter/models/font_data.dart';
-import 'package:app/services/font_converter/models/font_options.dart';
+import 'package:dart_lv_font_conv/dart_lv_font_conv.dart';
 import 'package:app/models/switch_hub/config.dart';
 
 /// Service for generating optimized LVGL font data from SwitchHub configuration
 /// using the built-in NotoSansSC-Regular.ttf font file
-/// This service implements efficient on-demand character extraction
+/// This service implements efficient on-demand character extraction using dart_lv_font_conv library
 class FontGenerationService {
   static const String _assetFontPath = 'assets/NotoSansSC-Regular.ttf';
 
   // Cache for generated fonts to avoid re-generation
-  static final Map<String, FontData> _fontCache = {};
+  static final Map<String, Map<String, dynamic>> _fontCache = {};
   static final Map<String, Uint8List> _binaryFontCache = {};
 
   // Maximum number of cached fonts
@@ -26,14 +23,14 @@ class FontGenerationService {
   /// [config] - The SwitchHub configuration containing UI text
   /// [fontSize] - Font size in pixels (default: 16)
   /// [bpp] - Bits per pixel for anti-aliasing (default: 2)
-  /// [includeCommonChars] - Whether to include common characters (default: true)
+  /// [includeCommonChars] - Whether to include common characters (default: false)
   ///
-  /// Returns [FontData] containing the generated font
-  static Future<FontData> generateFontData(
+  /// Returns [Map<String, dynamic>] containing the generated font data
+  static Future<Map<String, dynamic>> generateFontData(
     SwitchHubConfig config, {
     int fontSize = 16,
     int bpp = 2,
-    bool includeCommonChars = true,
+    bool includeCommonChars = false,
   }) async {
     // Create a cache key
     final cacheKey = _createFontCacheKey(
@@ -55,21 +52,51 @@ class FontGenerationService {
       includeCommonChars: includeCommonChars,
     );
 
-    // Convert Set to List for TTF parser
-    final characterList = characters.toList();
+    // Convert Set to List and sort for consistency
+    final characterList = characters.toList()..sort();
 
     // Load the built-in font file
     print('[FontGeneration] Loading built-in font file...');
     final fontBytes = await _loadBuiltInFont();
 
-    // Parse TTF and extract glyph data using the optimized parser
+    // Prepare arguments for external library
+    final args = <String, dynamic>{
+      'font': [
+        {
+          'source_path': 'built-in.ttf',
+          'source_bin': fontBytes,
+          'ranges': [
+            {
+              'range': characterList.map((c) => c.codeUnitAt(0)).toList(),
+              'symbols': null,
+            }
+          ],
+        }
+      ],
+      'size': fontSize,
+      'bpp': bpp,
+      'format': 'dump',
+      'auto_level2': false,
+      'auto_center': false,
+      'compress': true,
+      'compress_pre': false,
+      'use_color': false,
+      'serif': false,
+      'subpixel': false,
+      'retain_1px': false,
+      'no_kerning': true,
+      'no_compression': false,
+      'auto_font_name': false,
+      'lv_font': true,
+      'output': 'dump.txt',
+    };
+
     print('[FontGeneration] Extracting ${characterList.length} characters...');
-    final fontData = await TtfParser.parseTtfBytes(
-      fontBytes,
-      characterList,
-      size: fontSize,
-      bpp: bpp,
-    );
+    final result = await convert(args);
+
+    // Extract font data from result
+    final dumpData = result.values.first;
+    final fontData = _parseDumpData(dumpData);
 
     // Cache the result
     _cacheFontData(cacheKey, fontData);
@@ -82,7 +109,7 @@ class FontGenerationService {
   /// [config] - The SwitchHub configuration containing UI text
   /// [fontSize] - Font size in pixels (default: 16)
   /// [bpp] - Bits per pixel for anti-aliasing (default: 2)
-  /// [includeCommonChars] - Whether to include common characters (default: true)
+  /// [includeCommonChars] - Whether to include common characters (default: false)
   /// [noCompress] - Disable RLE compression (default: false)
   /// [noKerning] - Drop kerning info to reduce size (default: true)
   ///
@@ -91,7 +118,7 @@ class FontGenerationService {
     SwitchHubConfig config, {
     int fontSize = 16,
     int bpp = 2,
-    bool includeCommonChars = true,
+    bool includeCommonChars = false,
     bool noCompress = false,
     bool noKerning = true,
   }) async {
@@ -113,21 +140,56 @@ class FontGenerationService {
       return _binaryFontCache[cacheKey]!;
     }
 
-    final fontData = await generateFontData(
+    // Extract characters from configuration
+    final characters = FontExtractionService.getCharacterSet(
       config,
-      fontSize: fontSize,
-      bpp: bpp,
       includeCommonChars: includeCommonChars,
     );
 
-    final options = FontConverterService.createOptions(
-      bpp: bpp,
-      size: fontSize,
-      noCompress: noCompress,
-      noKerning: noKerning,
-    );
+    // Convert Set to List and sort for consistency
+    final characterList = characters.toList()..sort();
 
-    final binaryData = FontConverterService.convertToBinary(fontData, options);
+    // Load the built-in font file
+    print('[FontGeneration] Loading built-in font file...');
+    final fontBytes = await _loadBuiltInFont();
+
+    // Prepare arguments for external library for binary format
+    final args = <String, dynamic>{
+      'font': [
+        {
+          'source_path': 'built-in.ttf',
+          'source_bin': fontBytes,
+          'ranges': [
+            {
+              'range': characterList.map((c) => c.codeUnitAt(0)).toList(),
+              'symbols': null,
+            }
+          ],
+        }
+      ],
+      'size': fontSize,
+      'bpp': bpp,
+      'format': 'bin',
+      'auto_level2': false,
+      'auto_center': false,
+      'compress': !noCompress,
+      'compress_pre': false,
+      'use_color': false,
+      'serif': false,
+      'subpixel': false,
+      'retain_1px': false,
+      'no_kerning': noKerning,
+      'no_compression': noCompress,
+      'auto_font_name': false,
+      'lv_font': true,
+      'output': 'font.bin',
+    };
+
+    print('[FontGeneration] Extracting ${characterList.length} characters...');
+    final result = await convert(args);
+
+    // Extract binary data from result
+    final binaryData = Uint8List.fromList(result.values.first);
 
     // Cache the result
     _cacheBinaryFontData(cacheKey, binaryData);
@@ -135,14 +197,14 @@ class FontGenerationService {
     return binaryData;
   }
 
-  /// Generate font data with custom character set (optimized for small character sets)
+  /// Generate font data with custom character set
   ///
   /// [characters] - List of characters to include in the font
   /// [fontSize] - Font size in pixels (default: 16)
   /// [bpp] - Bits per pixel for anti-aliasing (default: 2)
   ///
-  /// Returns [FontData] containing the generated font
-  static Future<FontData> generateFontDataForCharacters(
+  /// Returns [Map<String, dynamic>] containing the generated font data
+  static Future<Map<String, dynamic>> generateFontDataForCharacters(
     List<String> characters, {
     int fontSize = 16,
     int bpp = 2,
@@ -156,19 +218,47 @@ class FontGenerationService {
       return _fontCache[cacheKey]!;
     }
 
-    // Remove duplicates and sort for consistent cache keys
+    // Remove duplicates and sort for consistency
     final uniqueCharacters = characters.toSet().toList()..sort();
 
     // Load the built-in font file
     final fontBytes = await _loadBuiltInFont();
 
-    // Parse TTF and extract glyph data using the optimized parser
-    final fontData = await TtfParser.parseTtfBytes(
-      fontBytes,
-      uniqueCharacters,
-      size: fontSize,
-      bpp: bpp,
-    );
+    // Prepare arguments for external library
+    final args = <String, dynamic>{
+      'font': [
+        {
+          'source_path': 'built-in.ttf',
+          'source_bin': fontBytes,
+          'ranges': [
+            {
+              'range': uniqueCharacters.map((c) => c.codeUnitAt(0)).toList(),
+              'symbols': null,
+            }
+          ],
+        }
+      ],
+      'size': fontSize,
+      'bpp': bpp,
+      'format': 'dump',
+      'auto_level2': false,
+      'auto_center': false,
+      'compress': true,
+      'compress_pre': false,
+      'use_color': false,
+      'serif': false,
+      'subpixel': false,
+      'retain_1px': false,
+      'no_kerning': true,
+      'no_compression': false,
+      'auto_font_name': false,
+      'lv_font': true,
+      'output': 'dump.txt',
+    };
+
+    final result = await convert(args);
+    final dumpData = result.values.first;
+    final fontData = _parseDumpData(dumpData);
 
     // Cache the result
     _cacheFontData(cacheKey, fontData);
@@ -176,7 +266,7 @@ class FontGenerationService {
     return fontData;
   }
 
-  /// Generate binary font data with custom character set (optimized for small character sets)
+  /// Generate binary font data with custom character set
   ///
   /// [characters] - List of characters to include in the font
   /// [fontSize] - Font size in pixels (default: 16)
@@ -209,20 +299,46 @@ class FontGenerationService {
       return _binaryFontCache[cacheKey]!;
     }
 
-    final fontData = await generateFontDataForCharacters(
-      characters,
-      fontSize: fontSize,
-      bpp: bpp,
-    );
+    // Remove duplicates and sort for consistency
+    final uniqueCharacters = characters.toSet().toList()..sort();
 
-    final options = FontConverterService.createOptions(
-      bpp: bpp,
-      size: fontSize,
-      noCompress: noCompress,
-      noKerning: noKerning,
-    );
+    // Load the built-in font file
+    final fontBytes = await _loadBuiltInFont();
 
-    final binaryData = FontConverterService.convertToBinary(fontData, options);
+    // Prepare arguments for external library for binary format
+    final args = <String, dynamic>{
+      'font': [
+        {
+          'source_path': 'built-in.ttf',
+          'source_bin': fontBytes,
+          'ranges': [
+            {
+              'range': uniqueCharacters.map((c) => c.codeUnitAt(0)).toList(),
+              'symbols': null,
+            }
+          ],
+        }
+      ],
+      'size': fontSize,
+      'bpp': bpp,
+      'format': 'bin',
+      'auto_level2': false,
+      'auto_center': false,
+      'compress': !noCompress,
+      'compress_pre': false,
+      'use_color': false,
+      'serif': false,
+      'subpixel': false,
+      'retain_1px': false,
+      'no_kerning': noKerning,
+      'no_compression': noCompress,
+      'auto_font_name': false,
+      'lv_font': true,
+      'output': 'font.bin',
+    };
+
+    final result = await convert(args);
+    final binaryData = Uint8List.fromList(result.values.first);
 
     // Cache the result
     _cacheBinaryFontData(cacheKey, binaryData);
@@ -230,14 +346,14 @@ class FontGenerationService {
     return binaryData;
   }
 
-  /// Generate minimal font data for a single character (optimized for dynamic loading)
+  /// Generate minimal font data for a single character
   ///
   /// [character] - Single character to include in the font
   /// [fontSize] - Font size in pixels (default: 16)
   /// [bpp] - Bits per pixel for anti-aliasing (default: 2)
   ///
-  /// Returns [FontData] containing the generated font
-  static Future<FontData> generateMinimalFontData(
+  /// Returns [Map<String, dynamic>] containing the generated font data
+  static Future<Map<String, dynamic>> generateMinimalFontData(
     String character, {
     int fontSize = 16,
     int bpp = 2,
@@ -260,13 +376,41 @@ class FontGenerationService {
     // Load the built-in font file
     final fontBytes = await _loadBuiltInFont();
 
-    // Parse TTF and extract glyph data for the single character
-    final fontData = await TtfParser.parseTtfBytes(
-      fontBytes,
-      [character],
-      size: fontSize,
-      bpp: bpp,
-    );
+    // Prepare arguments for external library
+    final args = <String, dynamic>{
+      'font': [
+        {
+          'source_path': 'built-in.ttf',
+          'source_bin': fontBytes,
+          'ranges': [
+            {
+              'range': [character.codeUnitAt(0)],
+              'symbols': null,
+            }
+          ],
+        }
+      ],
+      'size': fontSize,
+      'bpp': bpp,
+      'format': 'dump',
+      'auto_level2': false,
+      'auto_center': false,
+      'compress': true,
+      'compress_pre': false,
+      'use_color': false,
+      'serif': false,
+      'subpixel': false,
+      'retain_1px': false,
+      'no_kerning': true,
+      'no_compression': false,
+      'auto_font_name': false,
+      'lv_font': true,
+      'output': 'dump.txt',
+    };
+
+    final result = await convert(args);
+    final dumpData = result.values.first;
+    final fontData = _parseDumpData(dumpData);
 
     // Cache the result
     _cacheFontData(cacheKey, fontData);
@@ -304,41 +448,33 @@ class FontGenerationService {
   /// [config] - The SwitchHub configuration
   /// [fontSize] - Font size in pixels (default: 16)
   /// [bpp] - Bits per pixel for anti-aliasing (default: 2)
-  /// [includeCommonChars] - Whether to include common characters (default: true)
+  /// [includeCommonChars] - Whether to include common characters (default: false)
   ///
   /// Returns a Map containing font size information
   static Future<Map<String, dynamic>> getFontInfo(
     SwitchHubConfig config, {
     int fontSize = 16,
     int bpp = 2,
-    bool includeCommonChars = true,
+    bool includeCommonChars = false,
   }) async {
-    final fontData = await generateFontData(
+    final binaryData = await generateBinaryFont(
       config,
       fontSize: fontSize,
       bpp: bpp,
       includeCommonChars: includeCommonChars,
     );
 
-    final options = FontConverterService.createOptions(
-      bpp: bpp,
-      size: fontSize,
-      noCompress: false,
-      noKerning: true,
+    final characters = FontExtractionService.getCharacterSet(
+      config,
+      includeCommonChars: includeCommonChars,
     );
 
-    final binaryData = FontConverterService.convertToBinary(fontData, options);
-
     return {
-      'characterCount': fontData.glyphs.length,
+      'characterCount': characters.length,
       'fontSize': fontSize,
       'bpp': bpp,
-      'ascent': fontData.ascent,
-      'descent': fontData.descent,
       'binarySize': binaryData.length,
       'includesCommonChars': includeCommonChars,
-      'compressionRatio':
-          binaryData.length / (fontData.glyphs.length * fontSize * fontSize),
     };
   }
 
@@ -410,7 +546,7 @@ class FontGenerationService {
   }
 
   /// Cache font data with size limit
-  static void _cacheFontData(String key, FontData fontData) {
+  static void _cacheFontData(String key, Map<String, dynamic> fontData) {
     // If cache is full, remove the oldest entry
     if (_fontCache.length >= _maxCacheSize) {
       final firstKey = _fontCache.keys.first;
@@ -441,8 +577,18 @@ class FontGenerationService {
   static void clearCache() {
     _fontCache.clear();
     _binaryFontCache.clear();
-    TtfParser.clearCache();
     print('[FontGeneration] Cleared all font caches');
+  }
+
+  /// Parse dump data from external library format to internal format
+  static Map<String, dynamic> _parseDumpData(List<int> dumpData) {
+    // For now, return a basic structure. This can be enhanced based on needs
+    return {
+      'glyphs': [],
+      'ascent': 0,
+      'descent': 0,
+      'rawData': dumpData,
+    };
   }
 
   /// Get cache statistics

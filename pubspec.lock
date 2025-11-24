@@ -201,6 +201,13 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.0.0+7.7.0"
+  dart_lv_font_conv:
+    dependency: "direct main"
+    description:
+      path: "/home/jasper/Codes/dart_lv_font_conv"
+      relative: false
+    source: path
+    version: "1.0.0"
   dart_style:
     dependency: transitive
     description:

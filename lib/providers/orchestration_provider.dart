@@ -578,7 +578,7 @@ class OrchestrationProvider with ChangeNotifier {
       config,
       fontSize: fontSize,
       bpp: bpp,
-      includeCommonChars: true,
+      includeCommonChars: false,
     );
   }
 

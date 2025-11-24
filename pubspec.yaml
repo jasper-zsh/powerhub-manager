@@ -47,6 +47,10 @@ dependencies:
   # Permission handling for BLE
   permission_handler: ^11.3.1
 
+  # Font conversion library
+  dart_lv_font_conv:
+    path: /home/jasper/Codes/dart_lv_font_conv
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
