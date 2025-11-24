@@ -599,4 +599,107 @@ class FontGenerationService {
       'maxCacheSize': _maxCacheSize,
     };
   }
+
+  /// Generate binary font data with alphanumeric characters always included
+  ///
+  /// This method generates a font that contains both the characters extracted
+  /// from the configuration AND a comprehensive set of alphanumeric characters
+  /// (uppercase, lowercase, digits, and common punctuation).
+  ///
+  /// [config] - The SwitchHub configuration containing UI text
+  /// [fontSize] - Font size in pixels (default: 16)
+  /// [bpp] - Bits per pixel for anti-aliasing (default: 2)
+  /// [noCompress] - Disable RLE compression (default: false)
+  /// [noKerning] - Drop kerning info to reduce size (default: true)
+  ///
+  /// Returns [Uint8List] containing the binary font data
+  static Future<Uint8List> generateBinaryFontWithAlphanumeric(
+    SwitchHubConfig config, {
+    int fontSize = 16,
+    int bpp = 2,
+    bool noCompress = false,
+    bool noKerning = true,
+  }) async {
+    // Get extracted characters from config
+    final configChars = FontExtractionService.getCharacterSet(config, includeCommonChars: false);
+
+    // Get alphanumeric character set
+    final alphanumericChars = _getAlphanumericCharacterSet();
+
+    // Combine both sets
+    final allChars = <String>{};
+    allChars.addAll(configChars);
+    allChars.addAll(alphanumericChars);
+
+    // Convert to sorted list for consistency
+    final characterList = allChars.toList()..sort();
+
+    print('[FontGeneration] Generating font with ${characterList.length} characters (config: ${configChars.length}, alphanumeric: ${alphanumericChars.length})');
+
+    // Load the built-in font file
+    final fontBytes = await _loadBuiltInFont();
+
+    // Prepare arguments for external library for binary format
+    final args = <String, dynamic>{
+      'font': [
+        {
+          'source_path': 'built-in.ttf',
+          'source_bin': fontBytes,
+          'ranges': [
+            {
+              'range': characterList.map((c) => c.codeUnitAt(0)).toList(),
+              'symbols': null,
+            }
+          ],
+        }
+      ],
+      'size': fontSize,
+      'bpp': bpp,
+      'format': 'bin',
+      'auto_level2': false,
+      'auto_center': false,
+      'compress': !noCompress,
+      'compress_pre': false,
+      'use_color': false,
+      'serif': false,
+      'subpixel': false,
+      'retain_1px': false,
+      'no_kerning': noKerning,
+      'no_compression': noCompress,
+      'auto_font_name': false,
+      'lv_font': true,
+      'output': 'font.bin',
+    };
+
+    final result = await convert(args);
+    final binaryData = Uint8List.fromList(result.values.first);
+
+    return binaryData;
+  }
+
+  /// Get comprehensive alphanumeric character set
+  static Set<String> _getAlphanumericCharacterSet() {
+    final characters = <String>{};
+
+    // Add all uppercase letters (A-Z)
+    for (int i = 65; i <= 90; i++) {
+      characters.add(String.fromCharCode(i));
+    }
+
+    // Add all lowercase letters (a-z)
+    for (int i = 97; i <= 122; i++) {
+      characters.add(String.fromCharCode(i));
+    }
+
+    // Add all digits (0-9)
+    for (int i = 48; i <= 57; i++) {
+      characters.add(String.fromCharCode(i));
+    }
+
+    // Add common punctuation and symbols
+    final punctuation = ' !@#\$%^&*()_+-=[]{}|;:,.<>?/~`\'"\\';
+    characters.addAll(punctuation.split(''));
+
+    return characters;
+  }
 }

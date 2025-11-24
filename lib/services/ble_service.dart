@@ -35,6 +35,8 @@ class BLEService {
       '0000fff5-0000-1000-8000-00805f9b34fb';
   static const String monitoringUuid =
       '0000fff6-0000-1000-8000-00805f9b34fb';
+  static const String fontStatusUuid =
+      '0000fff2-0000-1000-8000-00805f9b34fb';
 
   // Legacy constants for backward compatibility
   static const String SERVICE_UUID = serviceUuid;
@@ -42,6 +44,7 @@ class BLEService {
   static const String CONTROL_COMMANDS_UUID = controlCommandsUuid;
   static const String POWER_MANAGEMENT_UUID = powerManagementUuid;
   static const String MONITORING_UUID = monitoringUuid;
+  static const String FONT_STATUS_UUID = fontStatusUuid;
   // Note: TELEMETRY_UUID is deprecated - use MONITORING_UUID instead
 
   BluetoothDevice? _connectedDevice;
@@ -1107,6 +1110,56 @@ class BLEService {
       await characteristic.setNotifyValue(false);
     } catch (e) {
       debugPrint('Failed to disable channel state notifications: $e');
+    }
+  }
+
+  // Font Upload Protocol Support
+
+  /// Discover font status characteristic for upload notifications
+  BluetoothCharacteristic? getFontStatusCharacteristic() {
+    return _findCharacteristic(FONT_STATUS_UUID);
+  }
+
+  /// Enable font status notifications for real-time upload progress and error reporting
+  Future<Stream<List<int>>> enableFontStatusNotifications() async {
+    if (_connectedDevice == null || !_connectedDevice!.isConnected) {
+      throw Exception('NOT_CONNECTED');
+    }
+
+    final characteristic = _findCharacteristic(FONT_STATUS_UUID);
+    if (characteristic == null) {
+      throw Exception('FONT_STATUS_CHARACTERISTIC_NOT_FOUND');
+    }
+
+    if (!(characteristic.properties.notify || characteristic.properties.indicate)) {
+      throw Exception('FONT_STATUS_NOTIFY_NOT_SUPPORTED');
+    }
+
+    try {
+      await characteristic.setNotifyValue(true);
+      final stream = characteristic.onValueReceived;
+
+      return stream.map((data) {
+        debugPrint('Font status notification received: $data');
+        return data;
+      });
+    } catch (e) {
+      debugPrint('Failed to enable font status notifications: $e');
+      throw Exception('FONT_STATUS_NOTIFICATION_SETUP_FAILED');
+    }
+  }
+
+  /// Disable font status notifications
+  Future<void> disableFontStatusNotifications() async {
+    final characteristic = _findCharacteristic(FONT_STATUS_UUID);
+    if (characteristic == null) {
+      return;
+    }
+
+    try {
+      await characteristic.setNotifyValue(false);
+    } catch (e) {
+      debugPrint('Failed to disable font status notifications: $e');
     }
   }
 }

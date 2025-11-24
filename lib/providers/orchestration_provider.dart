@@ -542,7 +542,11 @@ class OrchestrationProvider with ChangeNotifier {
         config,
         fontSize: fontSize,
         bpp: bpp,
-        onProgress: onFontProgress,
+        onProgress: (sequence, totalSequences, percentage) {
+          if (onFontProgress != null) {
+            onFontProgress(sequence + 1, totalSequences);
+          }
+        },
       );
     }
   }
@@ -562,7 +566,11 @@ class OrchestrationProvider with ChangeNotifier {
       config,
       fontSize: fontSize,
       bpp: bpp,
-      onProgress: onProgress,
+      onProgress: (sequence, totalSequences, percentage) {
+        if (onProgress != null) {
+          onProgress(sequence + 1, totalSequences);
+        }
+      },
     );
   }
 

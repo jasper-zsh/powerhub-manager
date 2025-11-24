@@ -170,8 +170,8 @@ class SwitchHubController extends StateNotifier<SwitchHubState> {
           config,
           fontSize: fontSize,
           bpp: bpp,
-          onProgress: (current, total) {
-            state = state.copyWith(statusMessage: '字库推送中: $current/$total');
+          onProgress: (sequence, totalSequences, percentage) {
+            state = state.copyWith(statusMessage: '字库推送中: $sequence/$totalSequences ($percentage%)');
           },
         );
       }
@@ -217,10 +217,10 @@ class SwitchHubController extends StateNotifier<SwitchHubState> {
               config,
               fontSize: fontSize,
               bpp: bpp,
-              onProgress: (current, total) {
+              onProgress: (sequence, totalSequences, percentage) {
                 state = state.copyWith(
                   statusMessage:
-                      '字库推送中 (${device.remoteId.str}): $current/$total',
+                      '字库推送中 (${device.remoteId.str}): $sequence/$totalSequences ($percentage%)',
                 );
               },
             );
