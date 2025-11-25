@@ -60,17 +60,13 @@ class FontGenerationService {
     final fontBytes = await _loadBuiltInFont();
 
     // Prepare arguments for external library
+    final rangeItems = _convertCharactersToRangeItems(characters);
     final args = <String, dynamic>{
       'font': [
         {
           'source_path': 'built-in.ttf',
           'source_bin': fontBytes,
-          'ranges': [
-            {
-              'range': characterList.map((c) => c.codeUnitAt(0)).toList(),
-              'symbols': null,
-            }
-          ],
+          'ranges': rangeItems,
         }
       ],
       'size': fontSize,
@@ -154,17 +150,13 @@ class FontGenerationService {
     final fontBytes = await _loadBuiltInFont();
 
     // Prepare arguments for external library for binary format
+    final rangeItems = _convertCharactersToRangeItems(characters);
     final args = <String, dynamic>{
       'font': [
         {
           'source_path': 'built-in.ttf',
           'source_bin': fontBytes,
-          'ranges': [
-            {
-              'range': characterList.map((c) => c.codeUnitAt(0)).toList(),
-              'symbols': null,
-            }
-          ],
+          'ranges': rangeItems,
         }
       ],
       'size': fontSize,
@@ -230,12 +222,7 @@ class FontGenerationService {
         {
           'source_path': 'built-in.ttf',
           'source_bin': fontBytes,
-          'ranges': [
-            {
-              'range': uniqueCharacters.map((c) => c.codeUnitAt(0)).toList(),
-              'symbols': null,
-            }
-          ],
+          'ranges': _convertCharactersToRangeItems(uniqueCharacters.toSet()),
         }
       ],
       'size': fontSize,
@@ -311,12 +298,7 @@ class FontGenerationService {
         {
           'source_path': 'built-in.ttf',
           'source_bin': fontBytes,
-          'ranges': [
-            {
-              'range': uniqueCharacters.map((c) => c.codeUnitAt(0)).toList(),
-              'symbols': null,
-            }
-          ],
+          'ranges': _convertCharactersToRangeItems(uniqueCharacters.toSet()),
         }
       ],
       'size': fontSize,
@@ -377,17 +359,13 @@ class FontGenerationService {
     final fontBytes = await _loadBuiltInFont();
 
     // Prepare arguments for external library
+    final rangeItems = _convertCharactersToRangeItems({character});
     final args = <String, dynamic>{
       'font': [
         {
           'source_path': 'built-in.ttf',
           'source_bin': fontBytes,
-          'ranges': [
-            {
-              'range': [character.codeUnitAt(0)],
-              'symbols': null,
-            }
-          ],
+          'ranges': rangeItems,
         }
       ],
       'size': fontSize,
@@ -591,6 +569,107 @@ class FontGenerationService {
     };
   }
 
+  /// Convert list of characters to proper range items format for dart_lv_font_conv
+  ///
+  /// The library expects a list of range items, where each item has:
+  /// - 'range': [start, end, mappedStart] or 'symbols': string
+  ///   mappedStart is the code point the first character should map to, and
+  ///   defaults to the start of the range to preserve Unicode values.
+  static List<Map<String, dynamic>> _convertCharactersToRangeItems(Set<String> characters) {
+    if (characters.isEmpty) return [];
+
+    // Use runes to handle characters outside the BMP correctly
+    final charCodes = characters.map((c) => c.runes.first).toList();
+    charCodes.sort();
+
+    // DEBUG: Log the character codes being processed
+    print('[FontGeneration] DEBUG: Converting characters to ranges');
+    print('[FontGeneration] DEBUG: Input characters: ${characters.join(', ')}');
+    print('[FontGeneration] DEBUG: Character codes: $charCodes');
+
+    final rangeItems = <Map<String, dynamic>>[];
+    int? rangeStart;
+    int? previousCode;
+
+    for (final code in charCodes) {
+      if (rangeStart == null) {
+        // Start new range
+        rangeStart = code;
+        previousCode = code;
+      } else if (code == previousCode! + 1) {
+        // Continue current range
+        previousCode = code;
+      } else {
+        // End current range and start new one
+        final mappedStart = rangeStart;
+        rangeItems.add({
+          'range': [rangeStart, previousCode!, mappedStart!],
+          'symbols': null,
+        });
+        print('[FontGeneration] DEBUG: Created range: [${rangeStart}, ${previousCode!}, ${mappedStart!}]');
+        rangeStart = code;
+        previousCode = code;
+      }
+    }
+
+    // Add final range
+    if (rangeStart != null && previousCode != null) {
+      final mappedStart = rangeStart;
+      final finalRange = [rangeStart, previousCode!, mappedStart];
+      rangeItems.add({
+        'range': finalRange,
+        'symbols': null,
+      });
+      print('[FontGeneration] DEBUG: Created final range: $finalRange');
+    }
+
+    print('[FontGeneration] DEBUG: Total range items created: ${rangeItems.length}');
+    for (int i = 0; i < rangeItems.length; i++) {
+      final range = rangeItems[i]['range'] as List<int>;
+      print('[FontGeneration] DEBUG: Range $i: $range (characters ${range[1] - range[0] + 1})');
+    }
+
+    return rangeItems;
+  }
+
+  /// Convert list of characters to proper range format for dart_lv_font_conv
+  ///
+  /// The library expects ranges in format [[start, end, mappedStart], ...] not individual character codes
+  /// Each range needs exactly 3 elements: start, end, mappedStart
+  static List<dynamic> _convertCharactersToRanges(Set<String> characters) {
+    if (characters.isEmpty) return [];
+
+    final charCodes = characters.map((c) => c.runes.first).toList();
+    charCodes.sort();
+
+    final ranges = <List<int>>[];
+    int? rangeStart;
+    int? previousCode;
+
+    for (final code in charCodes) {
+      if (rangeStart == null) {
+        // Start new range
+        rangeStart = code;
+        previousCode = code;
+      } else if (code == previousCode! + 1) {
+        // Continue current range
+        previousCode = code;
+      } else {
+        // End current range and start new one
+        ranges.add([rangeStart, previousCode!, rangeStart]);
+        rangeStart = code;
+        previousCode = code;
+      }
+    }
+
+    // Add final range
+    if (rangeStart != null && previousCode != null) {
+      ranges.add([rangeStart, previousCode!, rangeStart]);
+    }
+
+    return ranges;
+  }
+
   /// Get cache statistics
   static Map<String, dynamic> getCacheStats() {
     return {
@@ -611,6 +690,7 @@ class FontGenerationService {
   /// [bpp] - Bits per pixel for anti-aliasing (default: 2)
   /// [noCompress] - Disable RLE compression (default: false)
   /// [noKerning] - Drop kerning info to reduce size (default: true)
+  /// [includeCommonChars] - Include common CJK/punctuation set alongside config extraction (default: false to keep size small)
   ///
   /// Returns [Uint8List] containing the binary font data
   static Future<Uint8List> generateBinaryFontWithAlphanumeric(
@@ -619,9 +699,13 @@ class FontGenerationService {
     int bpp = 2,
     bool noCompress = false,
     bool noKerning = true,
+    bool includeCommonChars = false,
   }) async {
     // Get extracted characters from config
-    final configChars = FontExtractionService.getCharacterSet(config, includeCommonChars: false);
+    final configChars = FontExtractionService.getCharacterSet(
+      config,
+      includeCommonChars: includeCommonChars,
+    );
 
     // Get alphanumeric character set
     final alphanumericChars = _getAlphanumericCharacterSet();
@@ -640,17 +724,13 @@ class FontGenerationService {
     final fontBytes = await _loadBuiltInFont();
 
     // Prepare arguments for external library for binary format
+    final rangeItems = _convertCharactersToRangeItems(allChars);
     final args = <String, dynamic>{
       'font': [
         {
           'source_path': 'built-in.ttf',
           'source_bin': fontBytes,
-          'ranges': [
-            {
-              'range': characterList.map((c) => c.codeUnitAt(0)).toList(),
-              'symbols': null,
-            }
-          ],
+          'ranges': rangeItems,
         }
       ],
       'size': fontSize,

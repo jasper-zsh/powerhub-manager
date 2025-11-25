@@ -220,13 +220,14 @@ class SwitchHubBleService {
     int chunkSize = 200,
     Function(int sequence, int totalSequences, int percentage)? onProgress,
   }) async {
-    // Generate font data from configuration with alphanumeric characters included
-    final fontData = await FontGenerationService.generateBinaryFontForCharacters(
-      _getAlphanumericCharacterSet(),
+    // Generate font data from configuration plus alphanumeric/common characters
+    final fontData = await FontGenerationService.generateBinaryFontWithAlphanumeric(
+      config,
       fontSize: fontSize,
       bpp: bpp,
       noCompress: false,
       noKerning: true,
+      includeCommonChars: false,
     );
 
     // Push the generated font data
@@ -286,33 +287,5 @@ class SwitchHubBleService {
     final bytes = ByteData(2);
     bytes.setUint16(0, value & 0xFFFF, Endian.little);
     return bytes.buffer.asUint8List();
-  }
-
-  /// Get comprehensive alphanumeric character set for font generation
-  List<String> _getAlphanumericCharacterSet() {
-    final characters = <String>{};
-
-    // Add all uppercase letters (A-Z)
-    for (int i = 65; i <= 90; i++) {
-      characters.add(String.fromCharCode(i));
-    }
-
-    // Add all lowercase letters (a-z)
-    for (int i = 97; i <= 122; i++) {
-      characters.add(String.fromCharCode(i));
-    }
-
-    // Add all digits (0-9)
-    for (int i = 48; i <= 57; i++) {
-      characters.add(String.fromCharCode(i));
-    }
-
-    // Add common punctuation and symbols
-    final punctuation = ' !@#\$%^&*()_+-=[]{}|;:,.<>?/~`\'"\\';
-    characters.addAll(punctuation.split(''));
-
-    // Return as sorted list for consistency
-    final sortedList = characters.toList()..sort();
-    return sortedList;
   }
 }

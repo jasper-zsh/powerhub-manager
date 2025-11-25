@@ -6,7 +6,6 @@ import 'package:app/providers/orchestration_provider.dart';
 import 'package:app/providers/orchestration_provider_riverpod.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:app/controllers/switch_hub_controller.dart';
-import 'package:app/models/switch_hub/config.dart';
 import 'package:app/screens/orchestration_screen.dart';
 
 class SwitchHubScreen extends ConsumerStatefulWidget {
@@ -442,6 +441,16 @@ class _SwitchHubScreenState extends ConsumerState<SwitchHubScreen> {
           ),
         );
       }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('推送失败: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 
   void _previewSceneConfig(String sceneId) {
