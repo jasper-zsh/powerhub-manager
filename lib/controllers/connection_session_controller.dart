@@ -189,18 +189,9 @@ class ConnectionSessionController
 
   void _startTelemetryStreams() {
     ref.read(monitoringControllerProvider.notifier).startStreaming();
-    ref.read(monitoringControllerProvider.notifier).startStreaming();
   }
 
   void _startTelemetrySafely() {
-    try {
-      // Try to start telemetry streams safely
-      ref.read(monitoringControllerProvider.notifier).startStreaming();
-    } catch (error) {
-      debugPrint('Failed to start telemetry streaming: $error');
-      // Don't fail the connection, just log the error
-    }
-
     try {
       // Try to start monitoring streams safely
       ref.read(monitoringControllerProvider.notifier).startStreaming();
@@ -211,7 +202,6 @@ class ConnectionSessionController
   }
 
   void _stopTelemetryStreams() {
-    ref.read(monitoringControllerProvider.notifier).stopStreaming();
     ref.read(monitoringControllerProvider.notifier).stopStreaming();
   }
 

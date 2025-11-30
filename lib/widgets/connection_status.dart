@@ -89,9 +89,9 @@ class ConnectionStatus extends ConsumerWidget {
                         '${monitoringData.controlZoneTempCelsius!.toStringAsFixed(1)} °C',
                   ),
                 _TelemetryChip(
-                  label: '总电流',
+                  label: '总电流 (calc)',
                   value:
-                      '${monitoringData.totalInputCurrent.toStringAsFixed(2)} A',
+                      '${monitoringData.calculatedTotalCurrent.toStringAsFixed(2)} A',
                 ),
                 if (monitoringData.isThermalProtectionActive)
                   const _TelemetryChip(

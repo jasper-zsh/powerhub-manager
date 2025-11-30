@@ -8,7 +8,6 @@ class MonitoringScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final telemetryState = ref.watch(monitoringControllerProvider);
     final monitoringState = ref.watch(monitoringControllerProvider);
 
     return Scaffold(
@@ -18,7 +17,6 @@ class MonitoringScreen extends ConsumerWidget {
           IconButton(
             icon: const Icon(Icons.refresh),
             onPressed: () {
-              ref.read(monitoringControllerProvider.notifier).refreshSnapshot();
               ref.read(monitoringControllerProvider.notifier).refreshSnapshot();
             },
           ),
@@ -32,7 +30,7 @@ class MonitoringScreen extends ConsumerWidget {
             // Telemetry Data Section
             _buildSection(
               title: 'Telemetry Data',
-              child: telemetryState.when(
+              child: monitoringState.when(
                 data: (data) => data != null
                     ? _buildTelemetryCards(context, data)
                     : const Text('No telemetry data available'),
@@ -69,7 +67,7 @@ class MonitoringScreen extends ConsumerWidget {
             // System Status
             _buildSection(
               title: 'System Status',
-              child: _buildSystemStatus(context, telemetryState, monitoringState),
+              child: _buildSystemStatus(context, monitoringState),
             ),
 
             const SizedBox(height: 24),
@@ -77,7 +75,7 @@ class MonitoringScreen extends ConsumerWidget {
             // Real-time Updates Info
             _buildSection(
               title: 'Real-time Updates',
-              child: _buildRealtimeInfo(context, telemetryState, monitoringState),
+              child: _buildRealtimeInfo(context, monitoringState),
             ),
           ],
         ),
@@ -150,7 +148,8 @@ class MonitoringScreen extends ConsumerWidget {
         _buildInfoCard(
           context,
           title: 'Total Current',
-          value: '${monitoringData.totalInputCurrent.toStringAsFixed(2)} A',
+          value: '${monitoringData.calculatedTotalCurrent.toStringAsFixed(2)} A',
+          subtitle: '(calculated)',
           icon: Icons.electrical_services,
           color: Colors.green,
         ),
@@ -183,6 +182,7 @@ class MonitoringScreen extends ConsumerWidget {
     BuildContext context, {
     required String title,
     required String value,
+    String? subtitle,
     required IconData icon,
     required Color color,
   }) {
@@ -210,6 +210,16 @@ class MonitoringScreen extends ConsumerWidget {
                 fontWeight: FontWeight.bold,
               ),
             ),
+            if (subtitle != null) ...[
+              const SizedBox(height: 2),
+              Text(
+                subtitle,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: Colors.grey[600],
+                  fontStyle: FontStyle.italic,
+                ),
+              ),
+            ],
           ],
         ),
       ),
@@ -272,20 +282,12 @@ class MonitoringScreen extends ConsumerWidget {
 
   Widget _buildSystemStatus(
     BuildContext context,
-    AsyncValue telemetryState,
     AsyncValue monitoringState,
   ) {
-    final telemetryConnected = telemetryState is AsyncData && telemetryState.value != null;
     final monitoringConnected = monitoringState is AsyncData && monitoringState.value != null;
 
     return Row(
       children: [
-        _buildStatusIndicator(
-          'Telemetry',
-          telemetryConnected,
-          Icons.sensors,
-        ),
-        const SizedBox(width: 16),
         _buildStatusIndicator(
           'Monitoring',
           monitoringConnected,
@@ -294,7 +296,7 @@ class MonitoringScreen extends ConsumerWidget {
         const SizedBox(width: 16),
         _buildStatusIndicator(
           'System',
-          telemetryConnected && monitoringConnected,
+          monitoringConnected,
           Icons.settings,
         ),
       ],
@@ -339,14 +341,14 @@ class MonitoringScreen extends ConsumerWidget {
         // Total current
         _buildCurrentBar(
           context,
-          'Total Current',
-          monitoringData.totalInputCurrent,
+          'Total Current (calc)',
+          monitoringData.calculatedTotalCurrent,
           Colors.blue,
         ),
         const SizedBox(height: 16),
 
         // Individual channel currents
-        ...List.generate(6, (index) {
+        ...List.generate(monitoringData.channelCurrents.length, (index) {
           final channelCurrent = monitoringData.getChannelCurrent(index);
           return Padding(
             padding: const EdgeInsets.only(bottom: 12),
@@ -414,10 +416,8 @@ class MonitoringScreen extends ConsumerWidget {
 
   Widget _buildRealtimeInfo(
     BuildContext context,
-    AsyncValue telemetryState,
     AsyncValue monitoringState,
   ) {
-    final telemetryConnected = telemetryState is AsyncData && telemetryState.value != null;
     final monitoringConnected = monitoringState is AsyncData && monitoringState.value != null;
 
     return Column(

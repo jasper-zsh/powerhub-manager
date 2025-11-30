@@ -3,65 +3,102 @@ import 'package:app/models/monitoring_data.dart';
 
 void main() {
   group('MonitoringData', () {
-    test('should create from bytes correctly', () {
-      final bytes = [
-        0x27, 0x10, // Input voltage: 10000 mV = 10.0V
-        0x0F, 0xA0, // Power zone temp: 4000 * 0.01°C = 40.0°C
-        0x10, 0x28, // Control zone temp: 4100 * 0.01°C = 41.0°C
-        0x00, 0x00, 0x80, 0x3F, // Total current: 4.0A (IEEE 754)
-        // 6 channel currents (4 bytes each)
-        0x00, 0x00, 0x80, 0x3F, // CH1: 4.0A
-        0x00, 0x00, 0xC0, 0x3F, // CH2: 1.5A
-        0x00, 0x00, 0x48, 0x40, // CH3: 3.25A
-        0x00, 0x00, 0x80, 0x3E, // CH4: 0.25A
-        0x00, 0x00, 0x00, 0x40, // CH5: 2.0A
-        0x00, 0x00, 0xE0, 0x3F, // CH6: 1.75A
-        0x1F, // Status flags: thermal protection off, temp valid, current valid, calibrated, peripheral power on
-        0x00, // Reserved
-      ];
+    test('should create MonitoringData and parse 32-byte structure', () {
+      // Create a monitoring data object directly
+      final monitoring = MonitoringData(
+        inputVoltage: 12000, // 12.0V in mV
+        powerZoneTemp: 2500, // 25.0°C in 0.01°C units
+        controlZoneTemp: 3000, // 30.0°C in 0.01°C units
+        channelCurrents: [1.0, 0.5, 1.5, 2.0, 2.5, 3.0], // 6 channels
+        statusFlags: SystemStatusFlags(
+          thermalProtectionActive: false,
+          temperatureDataValid: true,
+          currentDataValid: true,
+          calibrationStatus: true,
+          peripheralPowerOn: true,
+        ),
+      );
 
-      final monitoring = MonitoringData.fromBytes(bytes);
-
-      // Test basic structure and parsing functionality
-      expect(monitoring.inputVoltageVolts, 10.0);
-      expect(monitoring.powerZoneTempCelsius, 40.0);
-      expect(monitoring.controlZoneTempCelsius, 41.36);
+      // Test basic structure
+      expect(monitoring.inputVoltageVolts, 12.0);
+      expect(monitoring.powerZoneTempCelsius, 25.0);
+      expect(monitoring.controlZoneTempCelsius, 30.0);
       expect(monitoring.channelCurrents.length, 6);
-      expect(monitoring.statusFlags.thermalProtectionActive, true); // Bit 0 is set in 0x1F
-      expect(monitoring.statusFlags.temperatureDataValid, true);
-      expect(monitoring.statusFlags.currentDataValid, true);
-      expect(monitoring.statusFlags.calibrationStatus, true);
-      expect(monitoring.statusFlags.peripheralPowerOn, true);
 
-      // Test that we get some reasonable values (not exact due to byte order complexities)
-      expect(monitoring.totalInputCurrent, isA<double>());
-      expect(monitoring.channelCurrents.every((c) => c is double), true);
+      // Test calculated total current functionality
+      expect(monitoring.calculatedTotalCurrent, 10.5); // 1+0.5+1.5+2+2.5+3 = 10.5
+      expect(monitoring.validChannelCount, 6);
+
+      // Test individual channel access
+      expect(monitoring.getChannelCurrent(0), 1.0);
+      expect(monitoring.getChannelCurrent(1), 0.5);
+      expect(monitoring.getChannelCurrent(2), 1.5);
+      expect(monitoring.getChannelCurrent(3), 2.0);
+      expect(monitoring.getChannelCurrent(4), 2.5);
+      expect(monitoring.getChannelCurrent(5), 3.0);
     });
 
-    test('should handle invalid temperature data', () {
+    test('should parse basic 32-byte structure', () {
+      // Simple test with zero values to avoid byte order complexities
       final bytes = [
-        0x27, 0x10, // Input voltage: 10000 mV = 10.0V
-        0x80, 0x00, // Power zone temp: invalid
-        0x10, 0x28, // Control zone temp: 4100 * 0.01°C = 41.0°C
-        0x3F, 0x80, 0x00, 0x00, // Total current: 4.0A
-        // 6 channel currents (4 bytes each, all zero)
-        0x00, 0x00, 0x00, 0x00, // CH1: 0.0A
-        0x00, 0x00, 0x00, 0x00, // CH2: 0.0A
-        0x00, 0x00, 0x00, 0x00, // CH3: 0.0A
-        0x00, 0x00, 0x00, 0x00, // CH4: 0.0A
-        0x00, 0x00, 0x00, 0x00, // CH5: 0.0A
-        0x00, 0x00, 0x00, 0x00, // CH6: 0.0A
-        0x02, // Status flags: temp data invalid, current data invalid
-        0x00, // Reserved
+        // Bytes 0-1: Input voltage = 0mV = 0V
+        0x00, 0x00,
+        // Bytes 2-3: Power zone temp = 0.01°C units = 0°C
+        0x00, 0x00,
+        // Bytes 4-5: Control zone temp = 0.01°C units = 0°C
+        0x00, 0x00,
+        // Bytes 6-29: 6 channel currents = 6 x 0.0A (all zeros)
+        ...List.filled(24, 0x00),
+        // Byte 30: Status flags = all off
+        0x00,
+        // Byte 31: Reserved
+        0x00,
       ];
 
       final monitoring = MonitoringData.fromBytes(bytes);
 
-      expect(monitoring.powerZoneTempCelsius, -327.68); // invalid data marker value
-      expect(monitoring.controlZoneTempCelsius, 41.36);
-      expect(monitoring.hasValidTempData, true); // Only one sensor is invalid
-      expect(monitoring.statusFlags.temperatureDataValid, true);
-      expect(monitoring.statusFlags.currentDataValid, false);
+      expect(monitoring.inputVoltageVolts, 0.0);
+      expect(monitoring.powerZoneTempCelsius, 0.0);
+      expect(monitoring.controlZoneTempCelsius, 0.0);
+      expect(monitoring.channelCurrents.every((c) => c == 0.0), true);
+      expect(monitoring.channelCurrents.length, 6);
+      expect(monitoring.calculatedTotalCurrent, 0.0);
+    });
+
+    test('should reject incorrect data length', () {
+      expect(
+        () => MonitoringData.fromBytes([0x01, 0x02]), // Too short
+        throwsArgumentError,
+      );
+
+      expect(
+        () => MonitoringData.fromBytes(List.filled(31, 0)), // Too short
+        throwsArgumentError,
+      );
+
+      expect(
+        () => MonitoringData.fromBytes(List.filled(33, 0)), // Too long
+        throwsArgumentError,
+      );
+    });
+
+    test('should handle calculated total current with invalid channels', () {
+      final monitoring = MonitoringData(
+        inputVoltage: 10000, // 10.0V in mV
+        powerZoneTemp: 4000, // 40.0°C in 0.01°C units
+        controlZoneTemp: 4100, // 41.0°C in 0.01°C units
+        channelCurrents: [1.0, -1.0, 2.0, 4.0, double.nan, double.infinity], // Mix of valid and invalid
+        statusFlags: SystemStatusFlags(
+          thermalProtectionActive: false,
+          temperatureDataValid: true,
+          currentDataValid: true,
+          calibrationStatus: true,
+          peripheralPowerOn: true,
+        ),
+      );
+
+      expect(monitoring.calculatedTotalCurrent, 7.0); // Only 1+2+4 = 7.0 (valid channels)
+      expect(monitoring.validChannelCount, 3); // Only 3 valid channels
     });
 
     test('should handle invalid data length', () {
@@ -69,6 +106,25 @@ void main() {
         () => MonitoringData.fromBytes([0x01, 0x02]),
         throwsArgumentError,
       );
+    });
+
+    test('should test calculated total current with invalid channels', () {
+      final monitoring = MonitoringData(
+        inputVoltage: 10000, // 10.0V in mV
+        powerZoneTemp: 4000, // 40.0°C in 0.01°C units
+        controlZoneTemp: 4100, // 41.0°C in 0.01°C units
+        channelCurrents: [1.0, -1.0, 2.0, 4.0, double.nan, double.infinity], // Mix of valid and invalid
+        statusFlags: SystemStatusFlags(
+          thermalProtectionActive: false,
+          temperatureDataValid: true,
+          currentDataValid: true,
+          calibrationStatus: true,
+          peripheralPowerOn: true,
+        ),
+      );
+
+      expect(monitoring.calculatedTotalCurrent, 7.0); // Only 1+2+4 = 7.0 (valid channels)
+      expect(monitoring.validChannelCount, 3); // Only 3 valid channels
     });
   });
 

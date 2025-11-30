@@ -137,9 +137,15 @@ class PowerStatus extends StatelessWidget {
         ),
         _buildInfoRow(
           context,
-          'Total Current',
-          '${data.totalInputCurrent.toStringAsFixed(3)}A',
+          'Total Current (calc)',
+          '${data.calculatedTotalCurrent.toStringAsFixed(3)}A',
         ),
+        if (data.validChannelCount < data.channelCurrents.length)
+          _buildInfoRow(
+            context,
+            'Valid Channels',
+            '${data.validChannelCount}/${data.channelCurrents.length}',
+          ),
         _buildInfoRow(
           context,
           'System Status',

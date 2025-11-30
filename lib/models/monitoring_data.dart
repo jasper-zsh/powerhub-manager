@@ -4,43 +4,43 @@ class MonitoringData {
   final int inputVoltage; // mV
   final int powerZoneTemp; // 0.01°C
   final int controlZoneTemp; // 0.01°C
-  final double totalInputCurrent; // A
-  final List<double> channelCurrents; // 6 channels, A each
+  final List<double> channelCurrents; // variable channels, A each
   final SystemStatusFlags statusFlags;
 
   const MonitoringData({
     required this.inputVoltage,
     required this.powerZoneTemp,
     required this.controlZoneTemp,
-    required this.totalInputCurrent,
     required this.channelCurrents,
     required this.statusFlags,
   });
 
   factory MonitoringData.fromBytes(List<int> data) {
-    if (data.length < 36) {
-      throw ArgumentError('Monitoring data must be 36 bytes');
+    if (data.length != 32) {
+      throw ArgumentError('Monitoring data must be exactly 32 bytes, got ${data.length}');
     }
 
     final byteData = ByteData.sublistView(Uint8List.fromList(data));
 
-    final inputVoltage = byteData.getUint16(0);
-    final powerZoneTemp = byteData.getInt16(2);
-    final controlZoneTemp = byteData.getInt16(4);
-    final totalInputCurrent = byteData.getFloat32(6);
+    // Parse fixed structure
+    final inputVoltage = byteData.getUint16(0);        // bytes 0-1: Input voltage (mV)
+    final powerZoneTemp = byteData.getInt16(2);         // bytes 2-3: Power zone temp (0.01°C)
+    final controlZoneTemp = byteData.getInt16(4);        // bytes 4-5: Control zone temp (0.01°C)
 
+    // Parse 6 channel currents (bytes 6-29: 6 x 4-byte floats)
     final channelCurrents = <double>[];
     for (int i = 0; i < 6; i++) {
-      channelCurrents.add(byteData.getFloat32(10 + (i * 4)));
+      final offset = 6 + (i * 4);
+      channelCurrents.add(byteData.getFloat32(offset));
     }
 
-    final statusFlags = SystemStatusFlags.fromByte(data[34]);
+    // Parse status flags (byte 30)
+    final statusFlags = SystemStatusFlags.fromByte(data[30]);
 
     return MonitoringData(
       inputVoltage: inputVoltage,
       powerZoneTemp: powerZoneTemp,
       controlZoneTemp: controlZoneTemp,
-      totalInputCurrent: totalInputCurrent,
       channelCurrents: channelCurrents,
       statusFlags: statusFlags,
     );
@@ -68,6 +68,21 @@ class MonitoringData {
     return channelCurrents[channelIndex];
   }
 
+  /// Calculates total current by summing all valid per-channel currents
+  /// Returns 0.0 if no valid channel currents are available
+  double get calculatedTotalCurrent {
+    return channelCurrents
+        .where((current) => current >= 0 && !current.isNaN && !current.isInfinite)
+        .fold(0.0, (sum, current) => sum + current);
+  }
+
+  /// Returns the number of channels with valid current readings
+  int get validChannelCount {
+    return channelCurrents
+        .where((current) => current >= 0 && !current.isNaN && !current.isInfinite)
+        .length;
+  }
+
   bool get isThermalProtectionActive => statusFlags.thermalProtectionActive;
   bool get isTemperatureDataValid => statusFlags.temperatureDataValid;
   bool get isCurrentDataValid => statusFlags.currentDataValid;
@@ -78,7 +93,6 @@ class MonitoringData {
         'voltage: ${inputVoltageVolts.toStringAsFixed(2)}V, '
         'powerTemp: ${powerZoneTempCelsius?.toStringAsFixed(2) ?? "invalid"}°C, '
         'controlTemp: ${controlZoneTempCelsius?.toStringAsFixed(2) ?? "invalid"}°C, '
-        'totalCurrent: ${totalInputCurrent.toStringAsFixed(3)}A, '
         'channelCurrents: ${channelCurrents.map((c) => c.toStringAsFixed(3)).join("A, ")}A, '
         'status: $statusFlags)';
   }

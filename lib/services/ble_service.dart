@@ -533,13 +533,13 @@ class BLEService {
 
       debugPrint('Monitoring read raw data length: ${value.length}, bytes: $value');
 
-      // Monitor data should be 36 bytes according to protocol
-      if (value.length != 36) {
-        debugPrint('Warning: Expected 36 bytes for monitoring data, got ${value.length}');
+      // Monitor data should be 32 bytes according to protocol
+      if (value.length != 32) {
+        debugPrint('Warning: Expected 32 bytes for monitoring data, got ${value.length}');
         // Don't throw error, try to parse anyway
       }
 
-      // Parse monitoring data format (36 bytes)
+      // Parse monitoring data format (32 bytes)
       final monitoringData = MonitoringData.fromBytes(value);
 
       _recordSuccessfulOperation();
@@ -575,13 +575,13 @@ class BLEService {
           try {
             debugPrint('Monitoring notification raw data length: ${value.length}, bytes: $value');
 
-            // Monitor data should be 36 bytes according to protocol
-            if (value.length != 36) {
-              debugPrint('Warning: Expected 36 bytes for monitoring data, got ${value.length}');
+            // Monitor data should be 32 bytes according to protocol
+            if (value.length != 32) {
+              debugPrint('Warning: Expected 32 bytes for monitoring data, got ${value.length}');
               // Don't throw error, try to parse anyway
             }
 
-            // Parse monitoring data format (36 bytes)
+            // Parse monitoring data format (32 bytes)
             final monitoringData = MonitoringData.fromBytes(value);
 
             _recordSuccessfulOperation();
@@ -1052,7 +1052,7 @@ class BLEService {
     try {
       await characteristic.setNotifyValue(true);
       return characteristic.lastValueStream
-          .where((value) => value.length == 36)
+          .where((value) => value.length == 32)
           .map((value) => MonitoringData.fromBytes(value));
     } catch (e) {
       debugPrint('Failed to enable monitoring notifications: $e');

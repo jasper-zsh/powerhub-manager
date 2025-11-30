@@ -41,33 +41,31 @@ void main() {
     test('startMonitoring should update state to subscribing then live', () async {
       final controller = container.read(monitoringControllerProvider.notifier);
       final monitoringData = MonitoringData(
-        inputVoltageVolts: 12.5,
-        powerZoneTempCelsius: 25.0,
-        controlZoneTempCelsius: 30.0,
-        totalInputCurrent: 1.5,
+        inputVoltage: 12500, // 12.5V in mV
+        powerZoneTemp: 2500, // 25.0°C in 0.01°C units
+        controlZoneTemp: 3000, // 30.0°C in 0.01°C units
         channelCurrents: [0.5, 0.3, 0.7],
-        statusFlags: MonitoringStatusFlags(
+        statusFlags: SystemStatusFlags(
           thermalProtectionActive: false,
           temperatureDataValid: true,
           currentDataValid: true,
           calibrationStatus: true,
           peripheralPowerOn: true,
         ),
-        timestamp: DateTime.now(),
       );
-      
+
       when(mockTelemetryRepository.startMonitoringStream())
           .thenAnswer((_) => Stream.value(monitoringData));
-      
+
       await controller.startMonitoring();
-      
+
       // Should transition to subscribing first, then live
       await Future.delayed(const Duration(milliseconds: 100));
-      
+
       final state = container.read(monitoringControllerProvider);
       expect(state.status, MonitoringStatus.live);
       expect(state.value?.inputVoltageVolts, 12.5);
-      expect(state.value?.totalInputCurrent, 1.5);
+      expect(state.value?.calculatedTotalCurrent, 1.5); // 0.5 + 0.3 + 0.7
       expect(state.updateCount, 1);
       verify(mockTelemetryRepository.startMonitoringStream()).called(1);
     });
@@ -75,30 +73,28 @@ void main() {
     test('stopMonitoring should update state to disconnected', () async {
       final controller = container.read(monitoringControllerProvider.notifier);
       final monitoringData = MonitoringData(
-        inputVoltageVolts: 12.5,
-        powerZoneTempCelsius: 25.0,
-        controlZoneTempCelsius: 30.0,
-        totalInputCurrent: 1.5,
+        inputVoltage: 12500, // 12.5V in mV
+        powerZoneTemp: 2500, // 25.0°C in 0.01°C units
+        controlZoneTemp: 3000, // 30.0°C in 0.01°C units
         channelCurrents: [0.5, 0.3, 0.7],
-        statusFlags: MonitoringStatusFlags(
+        statusFlags: SystemStatusFlags(
           thermalProtectionActive: false,
           temperatureDataValid: true,
           currentDataValid: true,
           calibrationStatus: true,
           peripheralPowerOn: true,
         ),
-        timestamp: DateTime.now(),
       );
-      
+
       when(mockTelemetryRepository.startMonitoringStream())
           .thenAnswer((_) => Stream.value(monitoringData));
       when(mockTelemetryRepository.stopMonitoringStream())
           .thenAnswer((_) async {});
-      
+
       await controller.startMonitoring();
       await Future.delayed(const Duration(milliseconds: 100));
       await controller.stopMonitoring();
-      
+
       final state = container.read(monitoringControllerProvider);
       expect(state.status, MonitoringStatus.disconnected);
       verify(mockTelemetryRepository.stopMonitoringStream()).called(1);
@@ -120,30 +116,28 @@ void main() {
     test('refreshData should fetch latest monitoring data', () async {
       final controller = container.read(monitoringControllerProvider.notifier);
       final monitoringData = MonitoringData(
-        inputVoltageVolts: 13.0,
-        powerZoneTempCelsius: 35.0,
-        controlZoneTempCelsius: 40.0,
-        totalInputCurrent: 2.0,
+        inputVoltage: 13000, // 13.0V in mV
+        powerZoneTemp: 3500, // 35.0°C in 0.01°C units
+        controlZoneTemp: 4000, // 40.0°C in 0.01°C units
         channelCurrents: [0.7, 0.5, 0.8],
-        statusFlags: MonitoringStatusFlags(
+        statusFlags: SystemStatusFlags(
           thermalProtectionActive: true,
           temperatureDataValid: true,
           currentDataValid: true,
           calibrationStatus: true,
           peripheralPowerOn: true,
         ),
-        timestamp: DateTime.now(),
       );
-      
+
       when(mockTelemetryRepository.getLatestMonitoringData())
           .thenAnswer((_) async => monitoringData);
-      
+
       await controller.refreshData();
-      
+
       final state = container.read(monitoringControllerProvider);
       expect(state.status, MonitoringStatus.live);
       expect(state.value?.inputVoltageVolts, 13.0);
-      expect(state.value?.totalInputCurrent, 2.0);
+      expect(state.value?.calculatedTotalCurrent, 2.0); // 0.7 + 0.5 + 0.8
       expect(state.value?.statusFlags.thermalProtectionActive, true);
       verify(mockTelemetryRepository.getLatestMonitoringData()).called(1);
     });
@@ -151,19 +145,17 @@ void main() {
     test('enableMonitoring should start monitoring if not already active', () async {
       final controller = container.read(monitoringControllerProvider.notifier);
       final monitoringData = MonitoringData(
-        inputVoltageVolts: 12.5,
-        powerZoneTempCelsius: 25.0,
-        controlZoneTempCelsius: 30.0,
-        totalInputCurrent: 1.5,
+        inputVoltage: 12500, // 12.5V in mV
+        powerZoneTemp: 2500, // 25.0°C in 0.01°C units
+        controlZoneTemp: 3000, // 30.0°C in 0.01°C units
         channelCurrents: [0.5, 0.3, 0.7],
-        statusFlags: MonitoringStatusFlags(
+        statusFlags: SystemStatusFlags(
           thermalProtectionActive: false,
           temperatureDataValid: true,
           currentDataValid: true,
           calibrationStatus: true,
           peripheralPowerOn: true,
         ),
-        timestamp: DateTime.now(),
       );
       
       when(mockTelemetryRepository.startMonitoringStream())
@@ -181,19 +173,17 @@ void main() {
     test('disableMonitoring should stop monitoring if active', () async {
       final controller = container.read(monitoringControllerProvider.notifier);
       final monitoringData = MonitoringData(
-        inputVoltageVolts: 12.5,
-        powerZoneTempCelsius: 25.0,
-        controlZoneTempCelsius: 30.0,
-        totalInputCurrent: 1.5,
+        inputVoltage: 12500, // 12.5V in mV
+        powerZoneTemp: 2500, // 25.0°C in 0.01°C units
+        controlZoneTemp: 3000, // 30.0°C in 0.01°C units
         channelCurrents: [0.5, 0.3, 0.7],
-        statusFlags: MonitoringStatusFlags(
+        statusFlags: SystemStatusFlags(
           thermalProtectionActive: false,
           temperatureDataValid: true,
           currentDataValid: true,
           calibrationStatus: true,
           peripheralPowerOn: true,
         ),
-        timestamp: DateTime.now(),
       );
       
       when(mockTelemetryRepository.startMonitoringStream())
@@ -213,19 +203,17 @@ void main() {
     test('isActive should return true when monitoring is active', () async {
       final controller = container.read(monitoringControllerProvider.notifier);
       final monitoringData = MonitoringData(
-        inputVoltageVolts: 12.5,
-        powerZoneTempCelsius: 25.0,
-        controlZoneTempCelsius: 30.0,
-        totalInputCurrent: 1.5,
+        inputVoltage: 12500, // 12.5V in mV
+        powerZoneTemp: 2500, // 25.0°C in 0.01°C units
+        controlZoneTemp: 3000, // 30.0°C in 0.01°C units
         channelCurrents: [0.5, 0.3, 0.7],
-        statusFlags: MonitoringStatusFlags(
+        statusFlags: SystemStatusFlags(
           thermalProtectionActive: false,
           temperatureDataValid: true,
           currentDataValid: true,
           calibrationStatus: true,
           peripheralPowerOn: true,
         ),
-        timestamp: DateTime.now(),
       );
       
       when(mockTelemetryRepository.startMonitoringStream())
@@ -242,35 +230,31 @@ void main() {
     test('stream updates should update state and increment update count', () async {
       final controller = container.read(monitoringControllerProvider.notifier);
       final monitoringData1 = MonitoringData(
-        inputVoltageVolts: 12.5,
-        powerZoneTempCelsius: 25.0,
-        controlZoneTempCelsius: 30.0,
-        totalInputCurrent: 1.5,
-        channelCurrents: [0.5, 0.3, 0.7],
-        statusFlags: MonitoringStatusFlags(
+        inputVoltage: 12500, // 12.5V in mV
+        powerZoneTemp: 2500, // 25.0°C in 0.01°C units
+        controlZoneTemp: 3000, // 30.0°C in 0.01°C units
+                channelCurrents: [0.5, 0.3, 0.7],
+        statusFlags: SystemStatusFlags(
           thermalProtectionActive: false,
           temperatureDataValid: true,
           currentDataValid: true,
           calibrationStatus: true,
           peripheralPowerOn: true,
         ),
-        timestamp: DateTime.now(),
-      );
+              );
       final monitoringData2 = MonitoringData(
-        inputVoltageVolts: 13.0,
-        powerZoneTempCelsius: 35.0,
-        controlZoneTempCelsius: 40.0,
-        totalInputCurrent: 2.0,
-        channelCurrents: [0.7, 0.5, 0.8],
-        statusFlags: MonitoringStatusFlags(
+        inputVoltage: 13000, // 13.0V in mV
+        powerZoneTemp: 3500, // 35.0°C in 0.01°C units
+        controlZoneTemp: 4000, // 40.0°C in 0.01°C units
+                channelCurrents: [0.7, 0.5, 0.8],
+        statusFlags: SystemStatusFlags(
           thermalProtectionActive: true,
           temperatureDataValid: true,
           currentDataValid: true,
           calibrationStatus: true,
           peripheralPowerOn: true,
         ),
-        timestamp: DateTime.now(),
-      );
+              );
       
       when(mockTelemetryRepository.startMonitoringStream())
           .thenAnswer((_) => Stream.fromIterable([monitoringData1, monitoringData2]));
@@ -283,26 +267,24 @@ void main() {
       final state = container.read(monitoringControllerProvider);
       expect(state.status, MonitoringStatus.live);
       expect(state.value?.inputVoltageVolts, 13.0);
-      expect(state.value?.totalInputCurrent, 2.0);
+      expect(state.value?.calculatedTotalCurrent, 2.0);
       expect(state.updateCount, 2);
     });
 
     test('getChannelCurrent should return correct channel current', () async {
       final controller = container.read(monitoringControllerProvider.notifier);
       final monitoringData = MonitoringData(
-        inputVoltageVolts: 12.5,
-        powerZoneTempCelsius: 25.0,
-        controlZoneTempCelsius: 30.0,
-        totalInputCurrent: 1.5,
+        inputVoltage: 12500, // 12.5V in mV
+        powerZoneTemp: 2500, // 25.0°C in 0.01°C units
+        controlZoneTemp: 3000, // 30.0°C in 0.01°C units
         channelCurrents: [0.5, 0.3, 0.7],
-        statusFlags: MonitoringStatusFlags(
+        statusFlags: SystemStatusFlags(
           thermalProtectionActive: false,
           temperatureDataValid: true,
           currentDataValid: true,
           calibrationStatus: true,
           peripheralPowerOn: true,
         ),
-        timestamp: DateTime.now(),
       );
       
       when(mockTelemetryRepository.getLatestMonitoringData())
@@ -319,20 +301,18 @@ void main() {
     test('isThermalProtectionActive should return correct status', () async {
       final controller = container.read(monitoringControllerProvider.notifier);
       final monitoringData = MonitoringData(
-        inputVoltageVolts: 12.5,
-        powerZoneTempCelsius: 25.0,
-        controlZoneTempCelsius: 30.0,
-        totalInputCurrent: 1.5,
-        channelCurrents: [0.5, 0.3, 0.7],
-        statusFlags: MonitoringStatusFlags(
+        inputVoltage: 12500, // 12.5V in mV
+        powerZoneTemp: 2500, // 25.0°C in 0.01°C units
+        controlZoneTemp: 3000, // 30.0°C in 0.01°C units
+                channelCurrents: [0.5, 0.3, 0.7],
+        statusFlags: SystemStatusFlags(
           thermalProtectionActive: true,
           temperatureDataValid: true,
           currentDataValid: true,
           calibrationStatus: true,
           peripheralPowerOn: true,
         ),
-        timestamp: DateTime.now(),
-      );
+              );
       
       when(mockTelemetryRepository.getLatestMonitoringData())
           .thenAnswer((_) async => monitoringData);

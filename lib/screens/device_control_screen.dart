@@ -440,9 +440,14 @@ class DeviceControlScreen extends ConsumerWidget {
       runSpacing: 8,
       children: [
         Chip(
-          label: Text('Current: ${monitoringData.totalInputCurrent.toStringAsFixed(2)}A'),
+          label: Text('Total Current: ${monitoringData.calculatedTotalCurrent.toStringAsFixed(2)}A (calc)'),
           backgroundColor: Colors.green.shade100,
         ),
+        if (monitoringData.validChannelCount < monitoringData.channelCurrents.length)
+          Chip(
+            label: Text('${monitoringData.validChannelCount}/${monitoringData.channelCurrents.length} channels valid'),
+            backgroundColor: Colors.orange.shade100,
+          ),
         if (monitoringData.isThermalProtectionActive)
           Chip(
             label: const Text('Thermal Protection Active'),
