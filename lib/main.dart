@@ -7,6 +7,7 @@ import 'package:app/screens/saved_controller_management_screen.dart';
 import 'package:app/screens/device_control_screen.dart';
 import 'package:app/screens/monitoring_screen.dart';
 import 'package:app/screens/power_management_screen.dart';
+import 'package:app/screens/switchhub_monitoring_screen.dart';
 
 void main() {
   // Enable debug print for development
@@ -55,6 +56,7 @@ class MainNavigationShell extends ConsumerWidget {
       DeviceControlScreen(),
       MonitoringScreen(),
       PowerManagementScreen(),
+      SwitchHubMonitoringScreen(),
     ];
 
     return Scaffold(
@@ -86,6 +88,11 @@ class MainNavigationShell extends ConsumerWidget {
             icon: Icon(Icons.power_settings_new_outlined),
             selectedIcon: Icon(Icons.power_settings_new),
             label: 'Power',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.bluetooth_searching_outlined),
+            selectedIcon: Icon(Icons.bluetooth_searching),
+            label: 'SwitchHub',
           ),
         ],
         onDestinationSelected: (index) {

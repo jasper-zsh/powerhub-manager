@@ -4,12 +4,15 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:app/models/orchestration/toggle_scene.dart';
 import 'package:app/providers/orchestration_provider.dart';
+import 'package:app/providers/switch_hub_provider_riverpod.dart';
 import 'package:app/services/switch_hub_ble_service.dart';
+import 'package:app/widgets/monitoring/voltage_monitor_widget.dart';
 
-class SwitchHubSyncSheet extends StatefulWidget {
+class SwitchHubSyncSheet extends ConsumerWidget {
   const SwitchHubSyncSheet({
     super.key,
     required this.scene,
@@ -22,10 +25,31 @@ class SwitchHubSyncSheet extends StatefulWidget {
   final Map<String, String> aliasMap;
 
   @override
-  State<SwitchHubSyncSheet> createState() => _SwitchHubSyncSheetState();
+  Widget build(BuildContext context, WidgetRef ref) {
+    return _SwitchHubSyncSheetContent(
+      scene: scene,
+      provider: provider,
+      aliasMap: aliasMap,
+    );
+  }
 }
 
-class _SwitchHubSyncSheetState extends State<SwitchHubSyncSheet> {
+class _SwitchHubSyncSheetContent extends ConsumerStatefulWidget {
+  const _SwitchHubSyncSheetContent({
+    required this.scene,
+    required this.provider,
+    this.aliasMap = const <String, String>{},
+  });
+
+  final ToggleScene scene;
+  final OrchestrationProvider provider;
+  final Map<String, String> aliasMap;
+
+  @override
+  ConsumerState<_SwitchHubSyncSheetContent> createState() => _SwitchHubSyncSheetContentState();
+}
+
+class _SwitchHubSyncSheetContentState extends ConsumerState<_SwitchHubSyncSheetContent> {
   late final config = widget.provider.buildSwitchHubConfig(
     widget.scene.id,
     schemaVersion: 1,
@@ -125,6 +149,40 @@ class _SwitchHubSyncSheetState extends State<SwitchHubSyncSheet> {
                       ],
                     ),
                     const SizedBox(height: 16),
+                    // Add SwitchHub monitoring widgets here
+                    Consumer(
+                      builder: (context, ref, child) {
+                        final monitoringData = ref.watch(switchHubMonitoringDataProvider);
+                        final isMonitoring = ref.watch(switchHubIsMonitoringProvider);
+
+                        if (_devices.isNotEmpty && monitoringData != null) {
+                          return Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text('设备状态监测', style: theme.textTheme.titleSmall),
+                              const SizedBox(height: 8),
+                              VoltageMonitorWidget(
+                                monitoringData: monitoringData,
+                                size: VoltageMonitorSize.small,
+                                showDetails: false,
+                              ),
+                              if (isMonitoring) ...[
+                                const SizedBox(height: 4),
+                                Text(
+                                  '实时监测中',
+                                  style: theme.textTheme.bodySmall?.copyWith(
+                                    color: theme.colorScheme.primary,
+                                  ),
+                                ),
+                              ],
+                              const SizedBox(height: 16),
+                            ],
+                          );
+                        }
+                        return const SizedBox.shrink();
+                      },
+                    ),
+                    const SizedBox(height: 16),
                     Text('涉及控制器', style: theme.textTheme.titleSmall),
                     const SizedBox(height: 8),
                     if (controllerIds.isEmpty)
@@ -210,7 +268,7 @@ class _SwitchHubSyncSheetState extends State<SwitchHubSyncSheet> {
   Widget _buildJsonPreview(ThemeData theme) {
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: theme.colorScheme.surfaceVariant,
+        color: theme.colorScheme.surfaceContainerHighest,
         borderRadius: BorderRadius.circular(12),
       ),
       child: ConstrainedBox(
@@ -285,7 +343,7 @@ class _SwitchHubSyncSheetState extends State<SwitchHubSyncSheet> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text('抗锯齿: ${_bpp} bpp'),
+                        Text('抗锯齿: $_bpp bpp'),
                         Slider(
                           value: _bpp.toDouble(),
                           min: 1,
@@ -332,20 +390,98 @@ class _SwitchHubSyncSheetState extends State<SwitchHubSyncSheet> {
         ? result.device.platformName
         : 'SwitchHub ($deviceId)';
     final isBusy = _isSyncing && _syncingDeviceId == deviceId;
+
     return Card(
-      child: ListTile(
-        title: Text(title),
-        subtitle: Text('ID: $deviceId\nRSSI: ${result.rssi} dBm'),
-        trailing: isBusy
-            ? const SizedBox(
-                width: 32,
-                height: 32,
-                child: CircularProgressIndicator(strokeWidth: 3),
-              )
-            : ElevatedButton(
-                onPressed: _isSyncing ? null : () => _syncToDevice(result),
-                child: const Text('同步'),
-              ),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w600,
+                          fontSize: 16,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'ID: $deviceId\nRSSI: ${result.rssi} dBm',
+                        style: TextStyle(
+                          color: Colors.grey.shade600,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                if (isBusy)
+                  const SizedBox(
+                    width: 32,
+                    height: 32,
+                    child: CircularProgressIndicator(strokeWidth: 3),
+                  )
+                else
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // Monitoring button
+                      Consumer(
+                        builder: (context, ref, child) {
+                          final isMonitoring = ref.watch(switchHubIsMonitoringProvider);
+                          final controller = ref.read(switchHubControllerProvider.notifier);
+
+                          return IconButton(
+                            icon: Icon(
+                              isMonitoring ? Icons.sensors : Icons.sensors_outlined,
+                              color: isMonitoring ? Colors.green : Colors.grey,
+                            ),
+                            onPressed: () async {
+                              if (isMonitoring) {
+                                await controller.stopMonitoring();
+                              } else {
+                                await controller.startMonitoring(result.device);
+                              }
+                            },
+                            tooltip: isMonitoring ? '停止监测' : '开始监测',
+                          );
+                        },
+                      ),
+                      const SizedBox(width: 8),
+                      // Sync button
+                      ElevatedButton(
+                        onPressed: _isSyncing ? null : () => _syncToDevice(result),
+                        child: const Text('同步'),
+                      ),
+                    ],
+                  ),
+              ],
+            ),
+            // Add monitoring data widget if available
+            Consumer(
+              builder: (context, ref, child) {
+                final monitoringData = ref.watch(switchHubMonitoringDataProvider);
+                if (monitoringData != null) {
+                  return Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: VoltageMonitorWidget(
+                      monitoringData: monitoringData,
+                      size: VoltageMonitorSize.small,
+                      showDetails: false,
+                    ),
+                  );
+                }
+                return const SizedBox.shrink();
+              },
+            ),
+          ],
+        ),
       ),
     );
   }
