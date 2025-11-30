@@ -1,11 +1,9 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:app/models/channel.dart';
 import 'package:app/models/pwm_controller.dart';
-import 'package:app/models/saved_controller.dart';
 import 'package:app/models/control_command/set_command.dart';
 import 'package:app/models/control_command/fade_command.dart';
 import 'package:app/models/control_command/blink_command.dart';

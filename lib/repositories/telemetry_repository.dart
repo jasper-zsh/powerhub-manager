@@ -1,5 +1,4 @@
 import 'package:app/models/monitoring_data.dart';
-import 'package:app/models/telemetry.dart';
 import 'package:app/services/ble_service.dart';
 
 /// 负责管理遥测、监控与通道状态通知的仓库
