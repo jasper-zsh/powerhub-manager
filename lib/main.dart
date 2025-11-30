@@ -6,7 +6,7 @@ import 'package:app/screens/orchestration_screen.dart';
 import 'package:app/screens/saved_controller_management_screen.dart';
 import 'package:app/screens/device_control_screen.dart';
 import 'package:app/screens/monitoring_screen.dart';
-import 'package:app/repositories/repository_providers.dart';
+import 'package:app/screens/power_management_screen.dart';
 
 void main() {
   // Enable debug print for development
@@ -45,22 +45,16 @@ class MyApp extends ConsumerWidget {
 class MainNavigationShell extends ConsumerWidget {
   const MainNavigationShell({super.key});
 
-  static const _titles = <String>[
-    'Switch Orchestration',
-    'Saved Devices',
-    'Device Control',
-    'System Monitoring',
-  ];
-
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final currentIndex = ref.watch(bottomNavigationBarIndexProvider);
-    
+
     final pages = const [
       OrchestrationScreen(),
       SavedControllerManagementScreen(),
       DeviceControlScreen(),
       MonitoringScreen(),
+      PowerManagementScreen(),
     ];
 
     return Scaffold(
@@ -87,6 +81,11 @@ class MainNavigationShell extends ConsumerWidget {
             icon: Icon(Icons.monitor_heart_outlined),
             selectedIcon: Icon(Icons.monitor_heart),
             label: 'Monitor',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.power_settings_new_outlined),
+            selectedIcon: Icon(Icons.power_settings_new),
+            label: 'Power',
           ),
         ],
         onDestinationSelected: (index) {

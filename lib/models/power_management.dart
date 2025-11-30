@@ -86,6 +86,17 @@ class PowerCommand {
   }
 
   @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    return other is PowerCommand &&
+        other.type == type &&
+        other.parameter == parameter;
+  }
+
+  @override
+  int get hashCode => type.hashCode ^ parameter.hashCode;
+
+  @override
   String toString() {
     if (type.hasParameter) {
       return 'PowerCommand(type: $type, parameter: $parameter)';

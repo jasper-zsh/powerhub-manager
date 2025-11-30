@@ -1,55 +1,109 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import 'package:app/models/power_management.dart';
-import 'package:app/controllers/device_control_controller.dart';
+import 'package:app/controllers/power_management_controller.dart';
 import 'package:app/controllers/connection_session_controller.dart';
+import 'package:app/models/power_management.dart';
 
-class PowerManagementScreen extends ConsumerWidget {
+class PowerManagementScreen extends ConsumerStatefulWidget {
   const PowerManagementScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final deviceControlState = ref.watch(deviceControlControllerProvider);
+  ConsumerState<PowerManagementScreen> createState() => _PowerManagementScreenState();
+}
+
+class _PowerManagementScreenState extends ConsumerState<PowerManagementScreen> {
+  @override
+  void initState() {
+    super.initState();
+    // Load configuration when screen is opened
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _refreshConfig();
+      }
+    });
+  }
+
+  Future<void> _refreshConfig() async {
+    await ref.read(powerManagementControllerProvider.notifier).refreshConfig();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final connectionState = ref.watch(connectionSessionControllerProvider);
-    
+    final powerState = ref.watch(powerManagementControllerProvider);
+
     final isConnected = connectionState.isConnected;
-    final powerState = deviceControlState.value?.powerManagement;
 
     return Scaffold(
       appBar: AppBar(
         title: const Text('Power Management'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: isConnected ? _refreshConfig : null,
+          ),
+        ],
       ),
       body: _buildBody(powerState, isConnected),
     );
   }
 
-  Widget _buildBody(PowerManagementState? powerState, bool isConnected) {
+  Widget _buildBody(powerState, bool isConnected) {
     if (!isConnected) {
       return _buildDisconnectedView();
     }
 
-    if (powerState == null) {
+    if (powerState.isLoading && powerState.config == null) {
       return const Center(
         child: CircularProgressIndicator(),
       );
     }
 
     return RefreshIndicator(
-      onRefresh: () => _refreshPowerState(ref),
+      onRefresh: _refreshConfig,
       child: SingleChildScrollView(
         physics: const AlwaysScrollableScrollPhysics(),
         padding: const EdgeInsets.all(16.0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _buildPowerStatusCard(powerState),
-            const SizedBox(height: 16),
-            _buildPowerControlCard(powerState),
-            const SizedBox(height: 16),
-            _buildBatteryCard(powerState),
-            const SizedBox(height: 16),
-            _buildPowerSettingsCard(powerState),
+            // Error display
+            if (powerState.error != null) ...[
+              _buildErrorCard(powerState.error!),
+              const SizedBox(height: 16),
+            ],
+
+            // Configuration display
+            if (powerState.config != null) ...[
+              _buildConfigurationCard(powerState.config!),
+              const SizedBox(height: 16),
+              _buildVoltageThresholdsCard(powerState.config!),
+              const SizedBox(height: 16),
+              _buildTemperatureThresholdsCard(powerState.config!),
+              const SizedBox(height: 16),
+              _buildPowerCommandsCard(),
+            ],
+
+            // Loading indicator for updates
+            if (powerState.isLoading) ...[
+              const Card(
+                child: Padding(
+                  padding: EdgeInsets.all(16.0),
+                  child: Row(
+                    children: [
+                      SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                      SizedBox(width: 16),
+                      Text('Updating configuration...'),
+                    ],
+                  ),
+                ),
+              ),
+            ],
           ],
         ),
       ),
@@ -61,27 +115,55 @@ class PowerManagementScreen extends ConsumerWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Icon(
+          Icon(
             Icons.power_off,
             size: 64,
             color: Colors.grey,
           ),
-          const SizedBox(height: 16),
+          SizedBox(height: 16),
           Text(
             'No device connected',
             style: TextStyle(fontSize: 16, color: Colors.grey),
           ),
-          const SizedBox(height: 16),
-          ElevatedButton(
-            onPressed: () => ref.read(connectionSessionControllerProvider.notifier).connectToSavedDevice(),
-            child: const Text('Connect to Saved Device'),
+          SizedBox(height: 8),
+          Text(
+            'Connect to a PowerHub device to manage power settings',
+            style: TextStyle(fontSize: 14, color: Colors.grey),
+            textAlign: TextAlign.center,
           ),
         ],
       ),
     );
   }
 
-  Widget _buildPowerStatusCard(PowerManagementState powerState) {
+  Widget _buildErrorCard(String error) {
+    return Card(
+      color: Colors.red.shade50,
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Row(
+          children: [
+            const Icon(Icons.error, color: Colors.red),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Text(
+                error,
+                style: const TextStyle(color: Colors.red),
+              ),
+            ),
+            IconButton(
+              icon: const Icon(Icons.close),
+              onPressed: () {
+                ref.read(powerManagementControllerProvider.notifier).clearError();
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildConfigurationCard(PowerManagementConfig config) {
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16.0),
@@ -91,55 +173,20 @@ class PowerManagementScreen extends ConsumerWidget {
             Row(
               children: [
                 const Icon(
-                  Icons.power,
+                  Icons.settings,
                   color: Colors.blue,
                 ),
                 const SizedBox(width: 8),
                 Text(
-                  'Power Status',
+                  'Power Management Configuration',
                   style: Theme.of(context).textTheme.titleMedium,
                 ),
               ],
             ),
             const SizedBox(height: 16),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                  'System Power',
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-                Switch(
-                  value: powerState.systemPowerOn,
-                  onChanged: (value) => _toggleSystemPower(ref, value),
-                ),
-              ],
-            ),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                  'Peripheral Power',
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-                Switch(
-                  value: powerState.peripheralPowerOn,
-                  onChanged: (value) => _togglePeripheralPower(ref, value),
-                ),
-              ],
-            ),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                  'Deep Sleep Mode',
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-                Switch(
-                  value: powerState.deepSleepMode,
-                  onChanged: (value) => _toggleDeepSleep(ref, value),
-                ),
-              ],
+            Text(
+              'Current power management settings from your PowerHub device:',
+              style: Theme.of(context).textTheme.bodyMedium,
             ),
           ],
         ),
@@ -147,7 +194,7 @@ class PowerManagementScreen extends ConsumerWidget {
     );
   }
 
-  Widget _buildPowerControlCard(PowerManagementState powerState) {
+  Widget _buildVoltageThresholdsCard(PowerManagementConfig config) {
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16.0),
@@ -157,121 +204,59 @@ class PowerManagementScreen extends ConsumerWidget {
             Row(
               children: [
                 const Icon(
-                  Icons.settings_power,
-                  color: Colors.green,
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  'Power Control',
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            ListTile(
-              title: const Text('Restart System'),
-              subtitle: const Text('Restart the device system'),
-              leading: const Icon(Icons.restart_alt),
-              onTap: () => _showRestartDialog(ref),
-            ),
-            ListTile(
-              title: const Text('Shutdown System'),
-              subtitle: const Text('Shutdown the device system'),
-              leading: const Icon(Icons.power_settings_new),
-              onTap: () => _showShutdownDialog(ref),
-            ),
-            ListTile(
-              title: const Text('Reset to Factory'),
-              subtitle: const Text('Reset device to factory settings'),
-              leading: const Icon(Icons.restore),
-              onTap: () => _showFactoryResetDialog(ref),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildBatteryCard(PowerManagementState powerState) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                const Icon(
-                  Icons.battery_full,
+                  Icons.electrical_services,
                   color: Colors.orange,
                 ),
                 const SizedBox(width: 8),
                 Text(
-                  'Battery Information',
+                  'Voltage Thresholds',
                   style: Theme.of(context).textTheme.titleMedium,
                 ),
               ],
             ),
             const SizedBox(height: 16),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                  'Battery Level',
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-                Text(
-                  '${powerState.batteryLevel}%',
-                  style: Theme.of(
-                    context,
-                  ).textTheme.headlineSmall?.copyWith(
-                        color: _getBatteryColor(powerState.batteryLevel),
-                      ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            LinearProgressIndicator(
-              value: powerState.batteryLevel / 100.0,
-              backgroundColor: Colors.grey.shade300,
-              valueColor: AlwaysStoppedAnimation<Color>(
-                _getBatteryColor(powerState.batteryLevel),
+            ListTile(
+              title: const Text('Sleep Voltage'),
+              subtitle: Text('Device will sleep when voltage drops below this level'),
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    '${config.sleepVoltage.toStringAsFixed(1)}V',
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  IconButton(
+                    icon: const Icon(Icons.edit),
+                    onPressed: () => _showSleepVoltageDialog(config.sleepVoltage),
+                  ),
+                ],
               ),
             ),
-            const SizedBox(height: 16),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                  'Charging Status',
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-                Text(
-                  powerState.isCharging ? 'Charging' : 'Not Charging',
-                  style: Theme.of(
-                    context,
-                  ).textTheme.headlineSmall?.copyWith(
-                        color: powerState.isCharging ? Colors.green : Colors.grey,
-                      ),
-                ),
-              ],
-            ),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                  'Battery Voltage',
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-                Text(
-                  '${powerState.batteryVoltage.toStringAsFixed(2)}V',
-                  style: Theme.of(
-                    context,
-                  ).textTheme.headlineSmall?.copyWith(
-                        color: _getBatteryVoltageColor(powerState.batteryVoltage),
-                      ),
-                ),
-              ],
+            const Divider(),
+            ListTile(
+              title: const Text('Wake Voltage'),
+              subtitle: Text('Device will wake when voltage rises above this level'),
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    '${config.wakeVoltage.toStringAsFixed(1)}V',
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  IconButton(
+                    icon: const Icon(Icons.edit),
+                    onPressed: () => _showWakeVoltageDialog(config.wakeVoltage),
+                  ),
+                ],
+              ),
             ),
           ],
         ),
@@ -279,7 +264,7 @@ class PowerManagementScreen extends ConsumerWidget {
     );
   }
 
-  Widget _buildPowerSettingsCard(PowerManagementState powerState) {
+  Widget _buildTemperatureThresholdsCard(PowerManagementConfig config) {
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16.0),
@@ -289,40 +274,59 @@ class PowerManagementScreen extends ConsumerWidget {
             Row(
               children: [
                 const Icon(
-                  Icons.tune,
-                  color: Colors.purple,
+                  Icons.thermostat,
+                  color: Colors.red,
                 ),
                 const SizedBox(width: 8),
                 Text(
-                  'Power Settings',
+                  'Temperature Thresholds',
                   style: Theme.of(context).textTheme.titleMedium,
                 ),
               ],
             ),
             const SizedBox(height: 16),
             ListTile(
-              title: const Text('Auto Sleep Timeout'),
-              subtitle: Text('${powerState.autoSleepTimeoutMinutes} minutes'),
-              trailing: const Icon(Icons.edit),
-              onTap: () => _showAutoSleepTimeoutDialog(powerState.autoSleepTimeoutMinutes),
+              title: const Text('High Temperature Threshold'),
+              subtitle: Text('Thermal protection activates above this temperature'),
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    '${config.highTempCelsius.toStringAsFixed(1)}°C',
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  IconButton(
+                    icon: const Icon(Icons.edit),
+                    onPressed: () => _showHighTempDialog(config.highTempCelsius),
+                  ),
+                ],
+              ),
             ),
+            const Divider(),
             ListTile(
-              title: const Text('Low Power Threshold'),
-              subtitle: Text('${powerState.lowPowerThreshold}%'),
-              trailing: const Icon(Icons.edit),
-              onTap: () => _showLowPowerThresholdDialog(powerState.lowPowerThreshold),
-            ),
-            SwitchListTile(
-              title: const Text('Power Saving Mode'),
-              subtitle: const Text('Enable power saving features'),
-              value: powerState.powerSavingMode,
-              onChanged: (value) => _togglePowerSavingMode(ref, value),
-            ),
-            SwitchListTile(
-              title: const Text('Wake on Motion'),
-              subtitle: const Text('Wake device on motion detection'),
-              value: powerState.wakeOnMotion,
-              onChanged: (value) => _toggleWakeOnMotion(ref, value),
+              title: const Text('Recovery Temperature'),
+              subtitle: Text('Thermal protection deactivates below this temperature'),
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    '${config.recoveryCelsius.toStringAsFixed(1)}°C',
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  IconButton(
+                    icon: const Icon(Icons.edit),
+                    onPressed: () => _showRecoveryTempDialog(config.recoveryCelsius),
+                  ),
+                ],
+              ),
             ),
           ],
         ),
@@ -330,188 +334,318 @@ class PowerManagementScreen extends ConsumerWidget {
     );
   }
 
-  Color _getBatteryColor(int level) {
-    if (level <= 20) return Colors.red;
-    if (level <= 50) return Colors.orange;
-    return Colors.green;
-  }
-
-  Color _getBatteryVoltageColor(double voltage) {
-    if (voltage < 3.0) return Colors.red;
-    if (voltage < 3.5) return Colors.orange;
-    return Colors.green;
-  }
-
-  void _toggleSystemPower(WidgetRef ref, bool value) {
-    ref.read(deviceControlControllerProvider.notifier).toggleSystemPower(value);
-  }
-
-  void _togglePeripheralPower(WidgetRef ref, bool value) {
-    ref.read(deviceControlControllerProvider.notifier).togglePeripheralPower(value);
-  }
-
-  void _toggleDeepSleep(WidgetRef ref, bool value) {
-    ref.read(deviceControlControllerProvider.notifier).toggleDeepSleep(value);
-  }
-
-  void _togglePowerSavingMode(WidgetRef ref, bool value) {
-    ref.read(deviceControlControllerProvider.notifier).togglePowerSavingMode(value);
-  }
-
-  void _toggleWakeOnMotion(WidgetRef ref, bool value) {
-    ref.read(deviceControlControllerProvider.notifier).toggleWakeOnMotion(value);
-  }
-
-  void _showRestartDialog(WidgetRef ref) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Restart System'),
-        content: const Text('Are you sure you want to restart the device system?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () {
-              ref.read(deviceControlControllerProvider.notifier).restartSystem();
-              Navigator.pop(context);
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('System restart initiated')),
-              );
-            },
-            child: const Text('Restart'),
-          ),
-        ],
+  Widget _buildPowerCommandsCard() {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(
+                  Icons.power_settings_new,
+                  color: Colors.green,
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  'Power Control Commands',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              'Manual power control commands for your PowerHub device:',
+              style: TextStyle(fontSize: 14, color: Colors.grey),
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                Expanded(
+                  child: ElevatedButton.icon(
+                    onPressed: _showForceSleepDialog,
+                    icon: const Icon(Icons.bedtime),
+                    label: const Text('Force Sleep'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.blue,
+                      foregroundColor: Colors.white,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: ElevatedButton.icon(
+                    onPressed: _showForceWakeDialog,
+                    icon: const Icon(Icons.wb_sunny),
+                    label: const Text('Force Wake'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.orange,
+                      foregroundColor: Colors.white,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }
 
-  void _showShutdownDialog(WidgetRef ref) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Shutdown System'),
-        content: const Text('Are you sure you want to shutdown the device system?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () {
-              ref.read(deviceControlControllerProvider.notifier).shutdownSystem();
-              Navigator.pop(context);
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('System shutdown initiated')),
-              );
-            },
-            child: const Text('Shutdown'),
-          ),
-        ],
-      ),
-    );
-  }
+  void _showSleepVoltageDialog(double currentValue) {
+    final controller = TextEditingController(text: currentValue.toStringAsFixed(1));
 
-  void _showFactoryResetDialog(WidgetRef ref) {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Factory Reset'),
-        content: const Text('Are you sure you want to reset the device to factory settings? This will erase all saved data.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () {
-              ref.read(deviceControlControllerProvider.notifier).factoryReset();
-              Navigator.pop(context);
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Factory reset initiated')),
-              );
-            },
-            style: TextButton.styleFrom(foregroundColor: Colors.red),
-            child: const Text('Reset'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _showAutoSleepTimeoutDialog(int currentValue) {
-    final controller = TextEditingController(text: currentValue.toString());
-    
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Auto Sleep Timeout'),
-        content: TextField(
-          controller: controller,
-          keyboardType: TextInputType.number,
-          decoration: const InputDecoration(
-            labelText: 'Timeout (minutes)',
-            hintText: 'Enter timeout in minutes',
-          ),
+        title: const Text('Set Sleep Voltage'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('Device will sleep when voltage drops below this level'),
+            const SizedBox(height: 16),
+            TextField(
+              controller: controller,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              decoration: const InputDecoration(
+                labelText: 'Sleep Voltage (V)',
+                hintText: 'Enter voltage between 8.0 and 15.0',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'Valid range: 8.0V - 15.0V',
+              style: TextStyle(fontSize: 12, color: Colors.grey),
+            ),
+          ],
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
             child: const Text('Cancel'),
           ),
-          TextButton(
+          ElevatedButton(
             onPressed: () {
-              final value = int.tryParse(controller.text);
-              if (value != null && value > 0) {
-                ref.read(deviceControlControllerProvider.notifier).setAutoSleepTimeout(value);
+              final value = double.tryParse(controller.text);
+              if (value != null && value >= 8.0 && value <= 15.0) {
+                ref.read(powerManagementControllerProvider.notifier)
+                    .setSleepVoltageThreshold(value);
                 Navigator.pop(context);
               }
             },
-            child: const Text('Save'),
+            child: const Text('Set'),
           ),
         ],
       ),
     );
   }
 
-  void _showLowPowerThresholdDialog(int currentValue) {
-    final controller = TextEditingController(text: currentValue.toString());
-    
+  void _showWakeVoltageDialog(double currentValue) {
+    final controller = TextEditingController(text: currentValue.toStringAsFixed(1));
+
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Low Power Threshold'),
-        content: TextField(
-          controller: controller,
-          keyboardType: TextInputType.number,
-          decoration: const InputDecoration(
-            labelText: 'Threshold (%)',
-            hintText: 'Enter threshold percentage',
-          ),
+        title: const Text('Set Wake Voltage'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('Device will wake when voltage rises above this level'),
+            const SizedBox(height: 16),
+            TextField(
+              controller: controller,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              decoration: const InputDecoration(
+                labelText: 'Wake Voltage (V)',
+                hintText: 'Enter voltage between 8.0 and 15.0',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'Valid range: 8.0V - 15.0V',
+              style: TextStyle(fontSize: 12, color: Colors.grey),
+            ),
+          ],
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
             child: const Text('Cancel'),
           ),
-          TextButton(
+          ElevatedButton(
             onPressed: () {
-              final value = int.tryParse(controller.text);
-              if (value != null && value >= 0 && value <= 100) {
-                ref.read(deviceControlControllerProvider.notifier).setLowPowerThreshold(value);
+              final value = double.tryParse(controller.text);
+              if (value != null && value >= 8.0 && value <= 15.0) {
+                ref.read(powerManagementControllerProvider.notifier)
+                    .setWakeVoltageThreshold(value);
                 Navigator.pop(context);
               }
             },
-            child: const Text('Save'),
+            child: const Text('Set'),
           ),
         ],
       ),
     );
   }
 
-  Future<void> _refreshPowerState(WidgetRef ref) {
-    return ref.read(deviceControlControllerProvider.notifier).refreshPowerState();
+  void _showHighTempDialog(double currentValue) {
+    final controller = TextEditingController(text: currentValue.toStringAsFixed(1));
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Set High Temperature Threshold'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('Thermal protection will activate above this temperature'),
+            const SizedBox(height: 16),
+            TextField(
+              controller: controller,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              decoration: const InputDecoration(
+                labelText: 'Temperature (°C)',
+                hintText: 'Enter temperature between 0.0 and 150.0',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'Valid range: 0.0°C - 150.0°C',
+              style: TextStyle(fontSize: 12, color: Colors.grey),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              final value = double.tryParse(controller.text);
+              if (value != null && value >= 0.0 && value <= 150.0) {
+                ref.read(powerManagementControllerProvider.notifier)
+                    .setHighTemperatureThreshold(value);
+                Navigator.pop(context);
+              }
+            },
+            child: const Text('Set'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showRecoveryTempDialog(double currentValue) {
+    final controller = TextEditingController(text: currentValue.toStringAsFixed(1));
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Set Recovery Temperature'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('Thermal protection will deactivate below this temperature'),
+            const SizedBox(height: 16),
+            TextField(
+              controller: controller,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              decoration: const InputDecoration(
+                labelText: 'Temperature (°C)',
+                hintText: 'Enter temperature between 0.0 and 150.0',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'Valid range: 0.0°C - 150.0°C',
+              style: TextStyle(fontSize: 12, color: Colors.grey),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              final value = double.tryParse(controller.text);
+              if (value != null && value >= 0.0 && value <= 150.0) {
+                ref.read(powerManagementControllerProvider.notifier)
+                    .setRecoveryThreshold(value);
+                Navigator.pop(context);
+              }
+            },
+            child: const Text('Set'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showForceSleepDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Force Sleep'),
+        content: const Text('Are you sure you want to force the device into sleep mode?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              ref.read(powerManagementControllerProvider.notifier).forceSleep();
+              Navigator.pop(context);
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Force sleep command sent')),
+              );
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.blue,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Force Sleep'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showForceWakeDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Force Wake'),
+        content: const Text('Are you sure you want to force the device to wake from sleep mode?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              ref.read(powerManagementControllerProvider.notifier).forceWake();
+              Navigator.pop(context);
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Force wake command sent')),
+              );
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.orange,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Force Wake'),
+          ),
+        ],
+      ),
+    );
   }
 }

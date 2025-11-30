@@ -14,7 +14,7 @@ import 'package:app/controllers/connection_session_controller.dart';
 import 'package:app/controllers/device_control_controller.dart';
 
 class HomeScreen extends ConsumerWidget {
-  const HomeScreen({Key? key}) : super(key: key);
+  const HomeScreen({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {

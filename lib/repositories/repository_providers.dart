@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:app/repositories/device_repository.dart';
 import 'package:app/repositories/orchestration_repository.dart';
+import 'package:app/repositories/power_management_repository.dart';
 import 'package:app/repositories/saved_controller_repository.dart';
 import 'package:app/repositories/switch_hub_command_service.dart';
 import 'package:app/repositories/telemetry_repository.dart';
@@ -25,6 +26,11 @@ final savedControllerRepositoryProvider =
 final orchestrationRepositoryProvider =
     Provider<OrchestrationRepository>((ref) {
   return OrchestrationRepository();
+});
+
+final powerManagementRepositoryProvider =
+    Provider<PowerManagementRepository>((ref) {
+  return PowerManagementRepository();
 });
 
 final switchHubCommandServiceProvider = Provider<SwitchHubCommandService>((ref) {
