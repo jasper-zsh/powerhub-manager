@@ -25,6 +25,9 @@ class FontExtractionService {
       _extractFromLogicNode(switchHub.offLogic, characters);
     }
 
+    // Always include degree symbol for temperature display
+    characters.add('°');
+
     return characters;
   }
 
