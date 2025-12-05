@@ -1,5 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:app/models/orchestration/toggle_scene.dart';
+import 'package:app/models/switch_hub/status_slot_configuration.dart';
+import 'package:app/widgets/status/status_slot_widget.dart';
+import 'package:app/providers/status_orchestration_provider.dart';
 
 typedef ToggleStateChanged = void Function(String stateId);
 typedef ToggleActionPressed = void Function(CommandBundle bundle);
@@ -16,6 +20,7 @@ class ToggleCard extends StatelessWidget {
     this.controllerAliases = const <String, String>{},
     this.missingControllers = const <String>{},
     this.switchSlot,
+    this.statusConfiguration,
   });
 
   final String toggleId;
@@ -27,6 +32,7 @@ class ToggleCard extends StatelessWidget {
   final Map<String, String> controllerAliases;
   final Set<String> missingControllers;
   final int? switchSlot;
+  final StatusSlotConfiguration? statusConfiguration;
 
   @override
   Widget build(BuildContext context) {
@@ -54,7 +60,7 @@ class ToggleCard extends StatelessWidget {
                   '${currentState.commandBundles.length} 个命令组合 · '
                   '位号: ${switchSlot ?? '自动'}',
                   style: theme.textTheme.bodySmall?.copyWith(
-                    color: theme.textTheme.bodySmall?.color?.withOpacity(0.7),
+                    color: theme.textTheme.bodySmall?.color?.withValues(alpha: 0.7),
                   ),
                 ),
                 const SizedBox(height: 12),
@@ -93,6 +99,56 @@ class ToggleCard extends StatelessWidget {
               ],
             ),
           ),
+          if (statusConfiguration != null)
+            Consumer(
+              builder: (context, ref, child) {
+                final remoteDataSources = ref.watch(remoteDataSourcesProvider);
+                final isRefreshing = ref.watch(isStatusDataRefreshingProvider);
+
+                final slot1 = statusConfiguration!.slot1;
+                final slot2 = statusConfiguration!.slot2;
+
+                final dataSource1 = slot1 != null && slot1.requiresRemoteConnection
+                    ? remoteDataSources[slot1.sourceMac]
+                    : null;
+                final dataSource2 = slot2 != null && slot2.requiresRemoteConnection
+                    ? remoteDataSources[slot2.sourceMac]
+                    : null;
+
+                return Column(
+                  children: [
+                    const Divider(height: 1),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '状态监控',
+                            style: theme.textTheme.titleSmall?.copyWith(
+                              color: theme.textTheme.titleSmall?.color?.withValues(alpha: 0.7),
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          StatusDisplayRow(
+                            slot1: slot1,
+                            slot2: slot2,
+                            dataSource1: dataSource1,
+                            dataSource2: dataSource2,
+                            isLoading1: slot1 != null && isRefreshing,
+                            isLoading2: slot2 != null && isRefreshing,
+                            onError: () {
+                              // Handle retry logic
+                            },
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
         ],
       ),
     );

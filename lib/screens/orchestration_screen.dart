@@ -4,10 +4,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:app/models/orchestration/toggle_scene.dart';
 import 'package:app/providers/orchestration_provider.dart';
 import 'package:app/providers/orchestration_provider_riverpod.dart';
+import 'package:app/providers/status_orchestration_provider.dart';
 import 'package:app/controllers/saved_controller_controller.dart';
 import 'package:app/widgets/orchestration/command_preview_sheet.dart';
 import 'package:app/widgets/orchestration/switch_hub_sync_sheet.dart';
 import 'package:app/widgets/orchestration/toggle_card.dart';
+import 'package:app/widgets/status/status_slot_editor_sheet.dart';
+import 'package:app/models/switch_hub/status_slot_config.dart';
+import 'package:app/models/switch_hub/ui_config.dart';
 
 class OrchestrationScreen extends ConsumerStatefulWidget {
   const OrchestrationScreen({super.key});
@@ -37,6 +41,9 @@ class _OrchestrationScreenState extends ConsumerState<OrchestrationScreen> {
     final provider = ref.watch(orchestrationProviderProvider);
     final scene = provider.activeScene;
     _syncSelection(scene);
+
+    // TODO: Initialize status orchestration when SwitchHub config is available
+    // This would typically happen after SwitchHub sync is completed
 
     return Scaffold(
       appBar: AppBar(
@@ -239,6 +246,10 @@ class _OrchestrationScreenState extends ConsumerState<OrchestrationScreen> {
     );
     final switchSlot = scene.switchSlots[toggleId];
 
+    // Get status configuration from the orchestration provider
+    final statusConfigurations = ref.watch(statusConfigurationsProvider);
+    final statusConfiguration = statusConfigurations[int.tryParse(toggleId) ?? 0];
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -263,6 +274,7 @@ class _OrchestrationScreenState extends ConsumerState<OrchestrationScreen> {
               controllerAliases: const <String, String>{},
               missingControllers: provider.missingControllers,
               switchSlot: switchSlot,
+              statusConfiguration: statusConfiguration,
             ),
             Positioned(
               right: 24,
@@ -275,6 +287,9 @@ class _OrchestrationScreenState extends ConsumerState<OrchestrationScreen> {
                       break;
                     case 'slot':
                       _editToggleSlot(toggleId);
+                      break;
+                    case 'status':
+                      _editStatusSlots(toggleId);
                       break;
                     case 'delete':
                       _removeToggle(toggleId);
@@ -294,6 +309,13 @@ class _OrchestrationScreenState extends ConsumerState<OrchestrationScreen> {
                     child: ListTile(
                       leading: Icon(Icons.confirmation_number_outlined),
                       title: Text('设置开关位号'),
+                    ),
+                  ),
+                  PopupMenuItem(
+                    value: 'status',
+                    child: ListTile(
+                      leading: Icon(Icons.tune),
+                      title: Text('配置状态显示'),
                     ),
                   ),
                   PopupMenuItem(
@@ -1133,6 +1155,7 @@ class _OrchestrationScreenState extends ConsumerState<OrchestrationScreen> {
         '${dateTime.hour.toString().padLeft(2, '0')}:${dateTime.minute.toString().padLeft(2, '0')}';
   }
 
+  
   void _showSnack(String message) {
     if (!mounted) {
       return;
@@ -1140,5 +1163,66 @@ class _OrchestrationScreenState extends ConsumerState<OrchestrationScreen> {
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  Future<void> _editStatusSlots(String toggleId) async {
+    final provider = ref.read(orchestrationProviderProvider);
+    final scene = provider.activeScene;
+
+    if (scene == null) {
+      _showSnack('没有活跃的场景');
+      return;
+    }
+
+    // Build SwitchHub config from the current scene
+    final switchHubConfig = provider.buildSwitchHubConfig(scene.id);
+
+    // Find the switch config by matching the channelLabel (which should equal toggleId)
+    final switchConfig = switchHubConfig.switches
+        .where((s) => s.uiConfig?.channelLabel == toggleId)
+        .firstOrNull;
+
+    if (switchConfig == null) {
+      _showSnack('未找到开关配置');
+      return;
+    }
+
+    // Extract current status slots from the config
+    final statusSlots = <StatusSlot?>[];
+    final uiConfig = switchConfig.uiConfig;
+
+    if (uiConfig != null && uiConfig.newStatusSlots.isNotEmpty) {
+      statusSlots.addAll(uiConfig.newStatusSlots);
+    }
+
+    // Ensure we have exactly 2 slots
+    while (statusSlots.length < 2) {
+      statusSlots.add(null);
+    }
+
+    // Show the status slot editor
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (context) => StatusSlotEditorSheet(
+        initialSlots: statusSlots,
+        onSaved: (newSlots) async {
+          try {
+            // Save the status slot configuration to the active scene
+            await provider.updateStatusSlots(toggleId, newSlots);
+
+            // Reinitialize status orchestration with the updated scene
+            final statusProvider = ref.read(statusOrchestrationProvider.notifier);
+            final updatedSwitchHubConfig = provider.buildSwitchHubConfig(scene.id);
+            await statusProvider.initialize(updatedSwitchHubConfig);
+
+            _showSnack('状态显示配置已保存');
+          } catch (e) {
+            _showSnack('保存配置失败: $e');
+          }
+        },
+      ),
+    );
   }
 }

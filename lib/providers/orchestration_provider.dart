@@ -13,6 +13,7 @@ import 'package:app/models/switch_hub/sequence_item.dart';
 import 'package:app/models/switch_hub/state_context.dart';
 import 'package:app/models/switch_hub/config.dart';
 import 'package:app/models/switch_hub/command_packet.dart';
+import 'package:app/models/switch_hub/status_slot_config.dart';
 
 class CommandPreviewResult {
   CommandPreviewResult({
@@ -129,6 +130,25 @@ class OrchestrationProvider with ChangeNotifier {
     }
     notifyListeners();
     return saved;
+  }
+
+  /// Update status slot configuration for a specific toggle
+  Future<void> updateStatusSlots(String toggleId, List<StatusSlot?> newSlots) async {
+    if (_activeScene == null) {
+      throw Exception('No active scene found');
+    }
+
+    // Filter out null slots and convert to list
+    final validSlots = newSlots.whereType<StatusSlot>().toList();
+
+    // Create updated scene with new status slots
+    final updatedScene = _activeScene!.copyWith(
+      statusSlots: Map<String, List<StatusSlot>>.from(_activeScene!.statusSlots)
+        ..[toggleId] = validSlots,
+      updatedAt: DateTime.now(),
+    );
+
+    await saveScene(updatedScene);
   }
 
   List<String> _toggleOrder(ToggleScene scene) {

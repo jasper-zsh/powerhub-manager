@@ -6,6 +6,7 @@ import 'package:app/models/switch_hub/logic_node.dart';
 import 'package:app/models/switch_hub/sequence_item.dart';
 import 'package:app/models/switch_hub/switch_definition.dart';
 import 'package:app/models/switch_hub/ui_config.dart';
+import 'package:app/models/switch_hub/status_slot_config.dart';
 
 enum CommandActionType { channelValue, presetTrigger }
 
@@ -270,6 +271,7 @@ class ToggleScene {
     List<ToggleState>? states,
     List<ConditionalRule>? rules,
     Map<String, int>? switchSlots,
+    Map<String, List<StatusSlot>>? statusSlots,
     DateTime? createdAt,
     DateTime? updatedAt,
     this.description,
@@ -279,6 +281,9 @@ class ToggleScene {
        switchSlots = Map<String, int>.unmodifiable(
          switchSlots ?? const <String, int>{},
        ),
+       statusSlots = Map<String, List<StatusSlot>>.unmodifiable(
+         statusSlots ?? const <String, List<StatusSlot>>{},
+       ),
        createdAt = createdAt ?? DateTime.now(),
        updatedAt = updatedAt ?? DateTime.now();
 
@@ -287,6 +292,7 @@ class ToggleScene {
   final List<ToggleState> states;
   final List<ConditionalRule> rules;
   final Map<String, int> switchSlots;
+  final Map<String, List<StatusSlot>> statusSlots;
   final DateTime createdAt;
   final DateTime updatedAt;
   final String? description;
@@ -306,6 +312,7 @@ class ToggleScene {
     List<ToggleState>? states,
     List<ConditionalRule>? rules,
     Map<String, int>? switchSlots,
+    Map<String, List<StatusSlot>>? statusSlots,
     DateTime? updatedAt,
     String? description,
     bool? isPublished,
@@ -316,6 +323,7 @@ class ToggleScene {
       states: states ?? List<ToggleState>.from(this.states),
       rules: rules ?? List<ConditionalRule>.from(this.rules),
       switchSlots: switchSlots ?? Map<String, int>.from(this.switchSlots),
+      statusSlots: statusSlots ?? Map<String, List<StatusSlot>>.from(this.statusSlots),
       createdAt: createdAt,
       updatedAt: updatedAt ?? DateTime.now(),
       description: description ?? this.description,
@@ -330,6 +338,7 @@ class ToggleScene {
       'states': states.map((state) => state.toJson()).toList(),
       'rules': rules.map((rule) => rule.toJson()).toList(),
       'switchSlots': switchSlots,
+      'statusSlots': statusSlots.map((key, value) => MapEntry(key, value.map((slot) => slot.toJson()).toList())),
       'createdAt': createdAt.toIso8601String(),
       'updatedAt': updatedAt.toIso8601String(),
       'description': description,
@@ -352,6 +361,29 @@ class ToggleScene {
         }
       });
     }
+
+    // Parse status slots
+    final statusSlots = <String, List<StatusSlot>>{};
+    final rawStatusSlots = json['statusSlots'];
+    if (rawStatusSlots is Map) {
+      rawStatusSlots.forEach((key, value) {
+        if (value is List) {
+          final slots = <StatusSlot>[];
+          for (final slotJson in value) {
+            try {
+              slots.add(StatusSlot.fromJson(Map<String, dynamic>.from(slotJson as Map)));
+            } catch (e) {
+              // Skip invalid status slot configurations
+              continue;
+            }
+          }
+          if (slots.isNotEmpty) {
+            statusSlots[key.toString()] = slots;
+          }
+        }
+      });
+    }
+
     return ToggleScene(
       id: json['id'] as String,
       name: json['name'] as String,
@@ -369,6 +401,7 @@ class ToggleScene {
           )
           .toList(),
       switchSlots: switchSlots,
+      statusSlots: statusSlots,
       createdAt: DateTime.parse(json['createdAt'] as String),
       updatedAt: DateTime.parse(json['updatedAt'] as String),
       description: json['description'] as String?,
@@ -401,10 +434,14 @@ extension SwitchHubSceneAdapter on ToggleScene {
     grouped.forEach((toggleId, toggleStates) {
       final onState = _resolveState(toggleStates, suffix: 'on');
       final offState = _resolveState(toggleStates, suffix: 'off');
+      // Get status slots for this toggle ID from the scene
+      final toggleStatusSlots = statusSlots[toggleId] ?? <StatusSlot>[];
+
       final ui = SwitchHubUiConfig(
         channelLabel: toggleId,
         onLabel: onState?.label,
         offLabel: offState?.label,
+        newStatusSlots: toggleStatusSlots,
       );
       final explicitSlot = switchSlots[toggleId];
       final switchId = explicitSlot != null && explicitSlot > 0

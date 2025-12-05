@@ -42,8 +42,8 @@ SwitchHub仅支持电压阈值管理。
 
 **0x05 字库更新流程**
 
-1. 写入 `[0x05][长度(2B)][分片序号(2B)][payload...]` 到 0xFFF1，payload 为字体二进制片段，分片序号从0开始，长度为本次payload字节数。
-2. 设备累计接收全部分片（总大小不得超过 1024KB），写入完成后自动重载LVGL字库。
+1. 写入 `[0x05][长度(2B)][分片序号(2B)][payload...]` 到 0xFFF1，payload 为字体二进制片段，分片序号从0开始依次递增，长度字段必须等于payload字节数。
+2. 设备累计接收全部分片（总大小不得超过 1024KB）。发送长度为0、无payload的分片表示传输结束并触发LVGL字库加载，并立即写入闪存以便重启后自动使用。
 3. 任何分片校验失败或顺序错误会返回 `BLE_ATT_ERR_UNLIKELY` 并丢弃缓存。
 
 ### 2. 实时监控特征 (UUID: 0xFFF2)
@@ -171,17 +171,17 @@ SwitchHub仅支持电压阈值管理。
 | `channel_label` | 字符串 | 通道标签内容 |
 | `on_label` | 字符串 | 开状态标签 |
 | `off_label` | 字符串 | 关状态标签 |
-| `status_slots` | 数组 | 最多两个 `status_slot` |
+| `status_slots` | 数组 | 最多两个 `status_slot`，第一个显示在屏幕上方，第二个显示在屏幕下方；格式为`{标签}\n{值}{单位}`，电压单位为`V`，电流单位为`A` |
 
 `status_slot` 字段：
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| `source_mac` | 字符串 | 数据来源设备 |
-| `characteristic_uuid` | 字符串 | 读取的特征 UUID |
-| `offset` | uint8 | 数据偏移 |
-| `length` | uint8 | 数据长度 |
-| `format` | 字符串 | `u16`/`s16`/`float`等解析方式 |
+| `source_mac` | 字符串 | 数据来源设备，特殊值`LOCAL`表示自身 |
+| `data_type` | 字符串 | 数据类型，可选值：`VOLTAGE`: 电源电压/`CHANNEL_CURRENT`： 通道电流/`TOTAL_CURRENT`: 总电流（计算）/`TEMPERATURE`: 温度 |
+| `params` | 字符串 | 数据类型参数，`CHANNEL_CURRENT`:为从0开始的通道号,`TEMPERATURE`:温度区域`POWER`或`CONTROL` |
+| `label` | 字符串 | 标签 |
+| `value` | 字符串 | 指标值（不含单位） |
 
 示例JSON（仅展示部分结构）：
 
@@ -221,14 +221,111 @@ SwitchHub仅支持电压阈值管理。
         "off_label": "全部关闭",
         "status_slots": [
           {
+            "source_mac": "LOCAL",
+            "data_type": "VOLTAGE",
+            "params": "",
+            "label": "输入电压"
+          },
+          {
             "source_mac": "AA:BB:CC:DD:EE:FF",
-            "characteristic_uuid": "0xFFF2",
-            "offset": 0,
-            "length": 2,
-            "format": "u16"
+            "data_type": "CHANNEL_CURRENT",
+            "params": "0",
+            "label": "通道0电流"
           }
         ]
       }
+    }
+  ]
+}
+```
+
+## 状态显示使用示例
+
+### 示例1：本地电压监控
+```json
+{
+  "status_slots": [
+    {
+      "source_mac": "LOCAL",
+      "data_type": "VOLTAGE",
+      "params": "",
+      "label": "电压"
+    }
+  ]
+}
+```
+
+### 示例2：远程设备电流监控
+```json
+{
+  "status_slots": [
+    {
+      "source_mac": "AA:BB:CC:DD:EE:FF",
+      "data_type": "CHANNEL_CURRENT",
+      "params": "0",
+      "label": "通道0电流"
+    },
+    {
+      "source_mac": "AA:BB:CC:DD:EE:FF",
+      "data_type": "TOTAL_CURRENT",
+      "params": "",
+      "label": "总电流"
+    }
+  ]
+}
+```
+
+### 示例3：混合监控配置
+```json
+{
+  "status_slots": [
+    {
+      "source_mac": "LOCAL",
+      "data_type": "VOLTAGE",
+      "params": "",
+      "label": "本地电压"
+    },
+    {
+      "source_mac": "BB:CC:DD:EE:FF:AA",
+      "data_type": "CHANNEL_CURRENT",
+      "params": "1",
+      "label": "远程通道1"
+    }
+  ]
+}
+```
+
+### 示例4：远程温度监控配置
+```json
+{
+  "status_slots": [
+    {
+      "source_mac": "AA:BB:CC:DD:EE:FF",
+      "data_type": "TEMPERATURE",
+      "params": "",
+      "label": "远程设备温度"
+    }
+  ]
+}
+```
+
+**注意**: 本地设备（"LOCAL"）仅支持VOLTAGE数据类型，温度、电流等数据需要从远程PowerHub设备获取。
+
+### 示例5：区域温度监控配置
+```json
+{
+  "status_slots": [
+    {
+      "source_mac": "AA:BB:CC:DD:EE:FF",
+      "data_type": "TEMPERATURE",
+      "params": "POWER",
+      "label": "电源区温度"
+    },
+    {
+      "source_mac": "BB:CC:DD:EE:FF:AA",
+      "data_type": "TEMPERATURE",
+      "params": "CONTROL",
+      "label": "控制区温度"
     }
   ]
 }
@@ -251,6 +348,62 @@ SwitchHub仅支持电压阈值管理。
 - 向设备写入温度阈值命令会返回错误
 - 仅处理输入电压与逻辑脚本内容
 
+## 状态UI实现细节
+
+### 架构概述
+状态UI系统采用模块化架构，包含以下核心组件：
+
+1. **system_monitor**: 状态数据收集和管理
+   - 提供状态槽配置接口
+   - 管理本地和远程数据源
+   - 自动数据刷新和缓存
+
+2. **lvgl_display**: UI渲染系统
+   - 扩展现有屏幕布局支持状态区域
+   - 双状态槽显示（每开关）
+   - 动态文本格式化
+
+3. **status_ui_coordinator**: 协调层
+   - 连接BLE配置与显示系统
+   - 处理配置变更和状态更新
+   - 跨设备数据集成
+
+4. **switchhub_logic**: BLE协议处理
+   - 解析status_slots JSON配置
+   - 验证数据源和参数
+   - 配置状态监控
+
+### UI显示格式
+
+屏幕显示布局（128x64像素）：
+```
+[通道标签]
+[状态标签]
+[状态槽1] [状态槽2]
+```
+
+- 每个开关占用2个物理屏幕
+- 状态槽支持自定义标签和单位
+- 自动数据格式化（电压V，电流A）
+
+### 数据刷新机制
+
+- **本地数据**: 2秒刷新间隔
+- **远程数据**: 基于连接状态和缓存
+- **错误处理**: "--" 显示和数据源恢复
+
+### 性能优化
+
+- 批量UI更新减少闪烁
+- 智能刷新间隔优化
+- 内存高效的数据结构
+- 线程安全的状态管理
+- 支持电压、电流、温度等多种数据类型
+- 本地设备仅支持电压，其他数据类型需从远程设备获取
+- 支持温度区域指定（POWER/CONTROL区）
+- 按需数据收集，优化资源使用
+- 错误处理与数据源恢复机制
+
 ## 开发注意事项
 
 - **服务发现**: 使用新的服务UUID `119B5F1B-1C7A-3E8E-6147-672F-0200-0B5E`
@@ -260,6 +413,7 @@ SwitchHub仅支持电压阈值管理。
 
 ## 版本记录
 
+- **v0.6**: 实现状态UI显示系统，支持本地/远程数据监控，双状态槽配置，实时数据刷新
 - **v0.5**: 完善开关逻辑编排，支持多设备序列、On/Off组合、IFTTT表达式与UI分区
 - **v0.4**: 移除电流监测字段，实时监控仅保留电压与状态
 - **v0.3**: 移除所有占位字段，仅保留实际测量与逻辑数据

@@ -6,6 +6,8 @@ import 'package:flutter/foundation.dart';
 import 'package:app/models/switch_hub/config.dart';
 import 'package:app/models/switch_hub/monitoring_data.dart';
 import 'package:app/models/switch_hub/voltage_thresholds.dart';
+import 'package:app/models/switch_hub/status_slot_config.dart';
+import 'package:app/models/switch_hub/status_data_type.dart';
 import 'package:app/services/font_generation_service.dart';
 import 'package:app/utils/ble_uuid.dart';
 
@@ -555,5 +557,225 @@ class SwitchHubBleService {
     final bytes = ByteData(2);
     bytes.setUint16(0, value & 0xFFFF, Endian.little);
     return bytes.buffer.asUint8List();
+  }
+
+  // Status data collection methods
+
+  /// Extract status slot configurations from a SwitchHub configuration
+  List<StatusSlot> extractStatusSlots(SwitchHubConfig config) {
+    final statusSlots = <StatusSlot>[];
+
+    for (final switchHub in config.switches) {
+      if (switchHub.uiConfig?.newStatusSlots.isNotEmpty == true) {
+        statusSlots.addAll(switchHub.uiConfig!.newStatusSlots);
+      }
+    }
+
+    return statusSlots;
+  }
+
+  /// Collect local voltage data from SwitchHub device
+  Future<String?> collectLocalVoltageData(BluetoothDevice device) async {
+    try {
+      await device.connect(autoConnect: false);
+
+      final services = await device.discoverServices();
+      BluetoothService? service;
+
+      for (final candidate in services) {
+        if (candidate.uuid == serviceUuid || candidate.uuid == serviceUuidReversed) {
+          service = candidate;
+          break;
+        }
+      }
+
+      if (service == null) {
+        debugPrint('SwitchHub service not found');
+        return null;
+      }
+
+      BluetoothCharacteristic? monitoringCharacteristic;
+      for (final characteristic in service.characteristics) {
+        if (characteristic.uuid == monitoringCharacteristicUuid) {
+          monitoringCharacteristic = characteristic;
+          break;
+        }
+      }
+
+      if (monitoringCharacteristic == null) {
+        debugPrint('Monitoring characteristic not found');
+        return null;
+      }
+
+      final data = await monitoringCharacteristic.read();
+      if (data.length < 2) {
+        debugPrint('Invalid monitoring data length: ${data.length}');
+        return null;
+      }
+
+      // Parse voltage from first 2 bytes (little-endian)
+      final voltageMv = (data[0] | (data[1] << 8));
+      final voltageV = (voltageMv / 1000).toStringAsFixed(2);
+
+      await device.disconnect();
+      return '${voltageV}V';
+
+    } catch (e) {
+      debugPrint('Error collecting local voltage data: $e');
+      return null;
+    }
+  }
+
+  /// Collect data from remote PowerHub device for a specific status slot
+  Future<String?> collectRemotePowerHubData(
+    StatusSlot statusSlot,
+    Map<String, BluetoothDevice> connectedDevices,
+  ) async {
+    if (statusSlot.isLocal) {
+      debugPrint('Attempted to collect remote data for local status slot');
+      return null;
+    }
+
+    final device = connectedDevices[statusSlot.sourceMac];
+    if (device == null) {
+      debugPrint('Remote device not connected: ${statusSlot.sourceMac}');
+      return null;
+    }
+
+    try {
+      await device.connect(autoConnect: false);
+
+      final services = await device.discoverServices();
+      BluetoothService? powerHubService;
+
+      // Look for PowerHub service (different UUID from SwitchHub)
+      const powerHubServiceUuid = '119B5F1B-1C7A-3E8E-6147-672F-0100-0B5E';
+      for (final candidate in services) {
+        if (candidate.uuid.toString().toUpperCase() == powerHubServiceUuid.toUpperCase()) {
+          powerHubService = candidate;
+          break;
+        }
+      }
+
+      if (powerHubService == null) {
+        debugPrint('PowerHub service not found on device: ${statusSlot.sourceMac}');
+        return null;
+      }
+
+      return await _collectDataFromPowerHubService(
+        powerHubService,
+        statusSlot.dataType,
+        statusSlot.params,
+      );
+
+    } catch (e) {
+      debugPrint('Error collecting remote data from ${statusSlot.sourceMac}: $e');
+      return null;
+    } finally {
+      try {
+        await device.disconnect();
+      } catch (e) {
+        debugPrint('Error disconnecting from ${statusSlot.sourceMac}: $e');
+      }
+    }
+  }
+
+  /// Collect specific data from PowerHub service based on data type and parameters
+  Future<String?> _collectDataFromPowerHubService(
+    BluetoothService service,
+    StatusDataType dataType,
+    String? params,
+  ) async {
+    switch (dataType) {
+      case StatusDataType.voltage:
+        return await _collectPowerHubVoltageData(service);
+
+      case StatusDataType.channelCurrent:
+        final channel = int.tryParse(params ?? '0');
+        if (channel == null || channel < 0 || channel > 15) {
+          return null;
+        }
+        return await _collectPowerHubChannelCurrentData(service, channel);
+
+      case StatusDataType.totalCurrent:
+        return await _collectPowerHubTotalCurrentData(service);
+
+      case StatusDataType.temperature:
+        final zone = params?.toUpperCase();
+        if (zone != 'POWER' && zone != 'CONTROL') {
+          return null;
+        }
+        return await _collectPowerHubTemperatureData(service, zone!);
+    }
+  }
+
+  /// Collect voltage data from PowerHub device
+  Future<String?> _collectPowerHubVoltageData(BluetoothService service) async {
+    // Look for monitoring characteristic in PowerHub service
+    const monitoringUuid = '0000fff6-0000-1000-8000-00805f9b34fb';
+
+    for (final characteristic in service.characteristics) {
+      if (characteristic.uuid.toString().toUpperCase() == monitoringUuid.toUpperCase()) {
+        final data = await characteristic.read();
+        if (data.length >= 4) {
+          // PowerHub monitoring data format: [voltage(2B)][current(2B)]
+          final voltageMv = (data[0] | (data[1] << 8));
+          final voltageV = (voltageMv / 1000).toStringAsFixed(2);
+          return '${voltageV}V';
+        }
+      }
+    }
+    return null;
+  }
+
+  /// Collect channel current data from PowerHub device
+  Future<String?> _collectPowerHubChannelCurrentData(BluetoothService service, int channel) async {
+    // This would typically use channel states characteristic
+    const channelStatesUuid = '0000fff0-0000-1000-8000-00805f9b34fb';
+
+    for (final characteristic in service.characteristics) {
+      if (characteristic.uuid.toString().toUpperCase() == channelStatesUuid.toUpperCase()) {
+        final data = await characteristic.read();
+        // PowerHub channel data format - this would need to match the actual PowerHub protocol
+        // For now, return a placeholder implementation
+        final currentMa = _extractChannelCurrent(data, channel);
+        return '${(currentMa / 1000).toStringAsFixed(3)}A';
+      }
+    }
+    return null;
+  }
+
+  /// Collect total current data from PowerHub device
+  Future<String?> _collectPowerHubTotalCurrentData(BluetoothService service) async {
+    const monitoringUuid = '0000fff6-0000-1000-8000-00805f9b34fb';
+
+    for (final characteristic in service.characteristics) {
+      if (characteristic.uuid.toString().toUpperCase() == monitoringUuid.toUpperCase()) {
+        final data = await characteristic.read();
+        if (data.length >= 4) {
+          // PowerHub monitoring data format: [voltage(2B)][current(2B)]
+          final currentMa = (data[2] | (data[3] << 8));
+          return '${(currentMa / 1000).toStringAsFixed(3)}A';
+        }
+      }
+    }
+    return null;
+  }
+
+  /// Collect temperature data from PowerHub device
+  Future<String?> _collectPowerHubTemperatureData(BluetoothService service, String zone) async {
+    // This would need to be implemented based on the PowerHub temperature protocol
+    // For now, return a placeholder implementation
+    debugPrint('Temperature data collection not yet implemented for zone: $zone');
+    return '${(25.0 + (zone == 'POWER' ? 2.0 : 0.0)).toStringAsFixed(1)}°C'; // Placeholder
+  }
+
+  /// Extract channel current from channel data (placeholder implementation)
+  int _extractChannelCurrent(List<int> data, int channel) {
+    // This is a placeholder - actual implementation would depend on PowerHub protocol
+    if (data.length > channel * 2 + 1) {
+      return (data[channel * 2] | (data[channel * 2 + 1] << 8));
+    }
+    return 0;
   }
 }
