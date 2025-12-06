@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:app/models/orchestration/toggle_scene.dart';
 import 'package:app/models/orchestration/action_validator.dart';
+import 'package:app/models/switch_hub/logic_node.dart';
 import 'package:app/providers/orchestration_provider.dart';
 import 'package:app/providers/orchestration_provider_riverpod.dart';
 import 'package:app/providers/status_orchestration_provider.dart';
@@ -10,9 +11,9 @@ import 'package:app/controllers/saved_controller_controller.dart';
 import 'package:app/widgets/orchestration/command_preview_sheet.dart';
 import 'package:app/widgets/orchestration/switch_hub_sync_sheet.dart';
 import 'package:app/widgets/orchestration/toggle_card.dart';
+import 'package:app/widgets/orchestration/if_node_rule_editor.dart';
 import 'package:app/widgets/status/status_slot_editor_sheet.dart';
 import 'package:app/models/switch_hub/status_slot_config.dart';
-import 'package:app/models/switch_hub/ui_config.dart';
 
 class OrchestrationScreen extends ConsumerStatefulWidget {
   const OrchestrationScreen({super.key});
@@ -273,6 +274,14 @@ class _OrchestrationScreenState extends ConsumerState<OrchestrationScreen> {
                 _stateForId(states, _selectedStates[toggleId]!),
                 existing: bundle,
               ),
+              onAddConditionalRule: (state) {
+                  print('DEBUG TOGGLE CARD BUTTON: stateId="${state.stateId}", hasConditionalLogic=${state.hasConditionalLogic}');
+                  if (state.hasConditionalLogic) {
+                    _showEditConditionalRuleDialog(state);
+                  } else {
+                    _showAddConditionalRuleDialog(state);
+                  }
+                },
               controllerAliases: const <String, String>{},
               missingControllers: provider.missingControllers,
               switchSlot: switchSlot,
@@ -293,27 +302,30 @@ class _OrchestrationScreenState extends ConsumerState<OrchestrationScreen> {
                     case 'status':
                       _editStatusSlots(toggleId);
                       break;
+                    case 'conditional':
+                      _showConditionalRulesDialog(toggleId, states);
+                      break;
                     case 'delete':
                       _removeToggle(toggleId);
                       break;
                   }
                 },
-                itemBuilder: (context) => const [
-                  PopupMenuItem(
+                itemBuilder: (context) => [
+                  const PopupMenuItem(
                     value: 'rename',
                     child: ListTile(
                       leading: Icon(Icons.drive_file_rename_outline),
                       title: Text('重命名'),
                     ),
                   ),
-                  PopupMenuItem(
+                  const PopupMenuItem(
                     value: 'slot',
                     child: ListTile(
                       leading: Icon(Icons.confirmation_number_outlined),
                       title: Text('设置开关位号'),
                     ),
                   ),
-                  PopupMenuItem(
+                  const PopupMenuItem(
                     value: 'status',
                     child: ListTile(
                       leading: Icon(Icons.tune),
@@ -321,6 +333,14 @@ class _OrchestrationScreenState extends ConsumerState<OrchestrationScreen> {
                     ),
                   ),
                   PopupMenuItem(
+                    value: 'conditional',
+                    child: ListTile(
+                      leading: Icon(Icons.code),
+                      title: Text('条件逻辑'),
+                      subtitle: Text('配置条件执行规则'),
+                    ),
+                  ),
+                  const PopupMenuItem(
                     value: 'delete',
                     child: ListTile(
                       leading: Icon(Icons.delete_outline),
@@ -1735,5 +1755,251 @@ class _OrchestrationScreenState extends ConsumerState<OrchestrationScreen> {
         },
       ),
     );
+  }
+
+  Future<void> _showConditionalRulesDialog(String toggleId, List<ToggleState> states) async {
+    final provider = ref.read(orchestrationProviderProvider);
+    final availableToggles = provider.activeToggleOrder;
+    final aliases = <String, String>{}; // TODO: Get from configuration
+
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (context) => DraggableScrollableSheet(
+        initialChildSize: 0.8,
+        minChildSize: 0.5,
+        maxChildSize: 0.95,
+        builder: (context, scrollController) => Container(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '条件逻辑管理 - $toggleId',
+                style: Theme.of(context).textTheme.titleLarge,
+              ),
+              const SizedBox(height: 16),
+              Expanded(
+                child: ListView.builder(
+                  controller: scrollController,
+                  itemCount: states.length,
+                  itemBuilder: (context, index) {
+                    final state = states[index];
+                    final hasConditionalLogic = state.hasConditionalLogic;
+                    final bundleRefs = state.conditionalBundleReferences;
+
+                    print('DEBUG UI RENDER: stateId="${state.stateId}", hasConditionalLogic=$hasConditionalLogic, toggleId=${state.toggleId}');
+
+                    return Card(
+                      child: Padding(
+                        padding: const EdgeInsets.all(12),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    state.label,
+                                    style: Theme.of(context).textTheme.titleMedium,
+                                  ),
+                                ),
+                                if (hasConditionalLogic)
+                                  Icon(
+                                    Icons.code,
+                                    color: Theme.of(context).colorScheme.primary,
+                                    size: 20,
+                                  ),
+                              ],
+                            ),
+                            const SizedBox(height: 8),
+                            Text('状态ID: ${state.stateId}'),
+                            if (hasConditionalLogic) ...[
+                              const SizedBox(height: 8),
+                              Container(
+                                padding: const EdgeInsets.all(8),
+                                decoration: BoxDecoration(
+                                  color: Theme.of(context).colorScheme.primaryContainer,
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      '已配置条件逻辑',
+                                      style: TextStyle(
+                                        color: Theme.of(context).colorScheme.onPrimaryContainer,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                    if (bundleRefs.isNotEmpty) ...[
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        '引用的组合: ${bundleRefs.join(", ")}',
+                                        style: TextStyle(
+                                          color: Theme.of(context).colorScheme.onPrimaryContainer,
+                                          fontSize: 12,
+                                        ),
+                                      ),
+                                    ],
+                                  ],
+                                ),
+                              ),
+                            ],
+                            const SizedBox(height: 8),
+                            Row(
+                              children: [
+                                if (!hasConditionalLogic)
+                                  TextButton.icon(
+                                    onPressed: () => _showAddConditionalRuleDialog(state),
+                                    icon: const Icon(Icons.add),
+                                    label: const Text('添加条件'),
+                                  )
+                                else
+                                  TextButton.icon(
+                                    onPressed: () {
+                                      print('DEBUG: 编辑条件 button CLICKED for stateId="${state.stateId}"');
+                                      _showEditConditionalRuleDialog(state);
+                                    },
+                                    icon: const Icon(Icons.edit),
+                                    label: const Text('编辑条件'),
+                                  ),
+                                if (hasConditionalLogic) ...[
+                                  const SizedBox(width: 8),
+                                  TextButton.icon(
+                                    onPressed: () => _showRemoveConditionalRuleDialog(state),
+                                    icon: const Icon(Icons.delete_outline),
+                                    label: const Text('删除条件'),
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showAddConditionalRuleDialog(ToggleState state) async {
+    final provider = ref.read(orchestrationProviderProvider);
+    final availableBundles = state.commandBundles;
+    final switchNumbers = provider.activeSwitchNumbers;
+
+    // Convert switch numbers to SW format for condition builder
+    final availableToggles = switchNumbers.values
+        .map((switchNum) => 'SW$switchNum')
+        .toList();
+
+    final aliases = <String, String>{}; // TODO: Get from configuration
+
+    final result = await showModalBottomSheet<SwitchHubIfNode>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (context) => IfNodeRuleEditorDialog(
+        availableBundles: availableBundles,
+        availableToggles: availableToggles,
+        aliases: aliases,
+      ),
+    );
+
+    if (result != null) {
+      try {
+        final conditionalState = state.copyWith(logic: result);
+        await provider.updateToggleState(state.toggleId, conditionalState);
+        if (mounted) {
+          _showSnack('条件规则已添加');
+        }
+      } catch (error) {
+        _showSnack('添加条件规则失败: $error');
+      }
+    }
+  }
+
+  Future<void> _showEditConditionalRuleDialog(ToggleState state) async {
+    final provider = ref.read(orchestrationProviderProvider);
+    final availableBundles = state.commandBundles;
+    final switchNumbers = provider.activeSwitchNumbers;
+
+    // Convert switch numbers to SW format for condition builder
+    final availableToggles = switchNumbers.values
+        .map((switchNum) => 'SW$switchNum')
+        .toList();
+
+    final aliases = <String, String>{}; // TODO: Get from configuration
+
+    if (!state.hasConditionalLogic) {
+      _showSnack('该状态没有条件逻辑');
+      return;
+    }
+
+    final existingIfNode = state.logic as SwitchHubIfNode?;
+
+    print('DEBUG OPENING EDIT: state.stateId="${state.stateId}", state.hasConditionalLogic=${state.hasConditionalLogic}');
+    print('DEBUG OPENING EDIT: state.logic=${state.logic}, existingIfNode=$existingIfNode');
+
+    final result = await showModalBottomSheet<SwitchHubIfNode>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (context) => IfNodeRuleEditorDialog(
+        ifNode: existingIfNode,
+        availableBundles: availableBundles,
+        availableToggles: availableToggles,
+        aliases: aliases,
+      ),
+    );
+
+    if (result != null) {
+      try {
+        final conditionalState = state.copyWith(logic: result);
+        await provider.updateToggleState(state.toggleId, conditionalState);
+        if (mounted) {
+          _showSnack('条件规则已更新');
+        }
+      } catch (error) {
+        _showSnack('更新条件规则失败: $error');
+      }
+    }
+  }
+
+  Future<void> _showRemoveConditionalRuleDialog(ToggleState state) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('删除条件规则'),
+        content: Text('确定删除状态 "${state.label}" 的条件规则吗？'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('取消'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      try {
+        final provider = ref.read(orchestrationProviderProvider);
+        final stateWithoutLogic = state.copyWith(logic: null);
+        await provider.updateToggleState(state.toggleId, stateWithoutLogic);
+        _showSnack('条件规则已删除');
+      } catch (error) {
+        _showSnack('删除条件规则失败: $error');
+      }
+    }
   }
 }

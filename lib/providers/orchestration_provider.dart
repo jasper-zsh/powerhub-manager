@@ -391,6 +391,31 @@ class OrchestrationProvider with ChangeNotifier {
     });
   }
 
+  Future<void> updateToggleState(String toggleId, ToggleState newState) async {
+    await _mutateState(toggleId, newState.stateId, (state) => newState);
+  }
+
+  /// Get switch numbers for all toggles in the active scene
+  Map<String, int> get activeSwitchNumbers {
+    if (_activeScene == null) return {};
+
+    final switchNumbers = <String, int>{};
+    final scene = _activeScene!;
+
+    // Get all toggle IDs in order
+    final toggleIds = _toggleOrder(scene);
+
+    // Map toggle IDs to switch numbers (1-based)
+    for (int i = 0; i < toggleIds.length; i++) {
+      final toggleId = toggleIds[i];
+      // Use explicitly configured switch slot, or fall back to position-based numbering
+      final switchNumber = scene.switchSlots[toggleId] ?? (i + 1);
+      switchNumbers[toggleId] = switchNumber;
+    }
+
+    return switchNumbers;
+  }
+
   Future<void> _mutateState(
     String toggleId,
     String stateId,

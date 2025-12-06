@@ -7,6 +7,7 @@ import 'package:app/models/switch_hub/sequence_item.dart';
 import 'package:app/models/switch_hub/switch_definition.dart';
 import 'package:app/models/switch_hub/ui_config.dart';
 import 'package:app/models/switch_hub/status_slot_config.dart';
+import 'package:app/models/orchestration/conditional_logic_manager.dart';
 
 enum CommandActionType { channelValue, presetTrigger, gradientMode, blinkMode, strobeMode }
 
@@ -177,6 +178,78 @@ class CommandAction {
         return '频闪: 通道${channel} (${count}次闪, ${totalTime}ms, ${pauseTime}ms暂停)';
     }
   }
+
+  /// Builds a PowerHub command packet from this action
+  /// Returns null for preset triggers as they use different command types
+  SwitchHubCommandPacket? buildPacketFromAction() {
+    final channel = this.channel;
+    final value = this.value ?? 0;
+
+    if (channel == null) return null;
+
+    List<int> payloadBytes = [];
+
+    switch (type) {
+      case CommandActionType.channelValue:
+        // Mode 0x00: Set mode - [brightness(1 byte)]
+        payloadBytes = [value & 0xFF];
+        return SwitchHubCommandPacket(
+          mode: 0x00,
+          channel: channel,
+          payload: base64Encode(payloadBytes),
+        );
+
+      case CommandActionType.gradientMode:
+        // Mode 0x01: Gradient mode - [brightness(1 byte)][duration_ms(2 bytes)]
+        final durationMs = duration ?? 1000;
+        payloadBytes = [
+          value & 0xFF,
+          (durationMs >> 8) & 0xFF, // High byte
+          durationMs & 0xFF,        // Low byte
+        ];
+        return SwitchHubCommandPacket(
+          mode: 0x01,
+          channel: channel,
+          payload: base64Encode(payloadBytes),
+        );
+
+      case CommandActionType.blinkMode:
+        // Mode 0x02: Blink mode - [period_ms(2 bytes)]
+        final periodMs = period ?? 500;
+        payloadBytes = [
+          (periodMs >> 8) & 0xFF, // High byte
+          periodMs & 0xFF,        // Low byte
+        ];
+        return SwitchHubCommandPacket(
+          mode: 0x02,
+          channel: channel,
+          payload: base64Encode(payloadBytes),
+        );
+
+      case CommandActionType.strobeMode:
+        // Mode 0x03: Strobe mode - [count(1 byte)][total_time_ms(2 bytes)][pause_time_ms(2 bytes)]
+        final count = this.count ?? 5;
+        final totalTimeMs = totalTime ?? 1000;
+        final pauseTimeMs = pauseTime ?? 100;
+        payloadBytes = [
+          count & 0xFF,
+          (totalTimeMs >> 8) & 0xFF,
+          totalTimeMs & 0xFF,
+          (pauseTimeMs >> 8) & 0xFF,
+          pauseTimeMs & 0xFF,
+        ];
+        return SwitchHubCommandPacket(
+          mode: 0x03,
+          channel: channel,
+          payload: base64Encode(payloadBytes),
+        );
+
+      case CommandActionType.presetTrigger:
+        // For preset triggers, we'd need different handling
+        // This would be a different command type, not part of the standard channel control
+        return null;
+    }
+  }
 }
 
 class CommandBundle {
@@ -255,8 +328,25 @@ class ToggleState {
 
   bool get hasCommands => commandBundles.any((bundle) => !bundle.isEmpty);
 
+  bool get hasConditionalLogic {
+    final result = logic != null;
+    if (result && toggleId == "射灯") {
+      print('DEBUG hasConditionalLogic: toggleId="$toggleId", logic=$logic, result=$result');
+    }
+    return result;
+  }
+
   SwitchHubLogicNode get resolvedLogic =>
       logic ?? _logicFromCommandBundles(commandBundles);
+
+  /// Gets the resolved logic with proper bundle reference resolution
+  SwitchHubLogicNode get fullyResolvedLogic {
+    final manager = const ConditionalLogicManager();
+    final resolved = manager.resolveBundleReferences(resolvedLogic, commandBundles);
+
+    
+    return resolved;
+  }
 
   ToggleState copyWith({
     String? toggleId,
@@ -284,8 +374,49 @@ class ToggleState {
     );
   }
 
+  /// Gets all bundle references in the conditional logic
+  Set<String> get conditionalBundleReferences {
+    if (logic == null) return <String>{};
+
+    final manager = const ConditionalLogicManager();
+    return manager.extractBundleReferences(logic!);
+  }
+
+  /// Validates the conditional logic in this state
+  ConditionalValidationResult validateConditionalLogic(
+    List<String> availableToggles,
+    Map<String, String> aliases,
+  ) {
+    final manager = const ConditionalLogicManager();
+    return manager.validateLogic(this, availableToggles, aliases);
+  }
+
+  /// Creates a conditional rule from a bundle
+  ToggleState withConditionalRule(
+    String bundleId,
+    String condition,
+    List<CommandBundle> availableBundles,
+  ) {
+    final manager = const ConditionalLogicManager();
+    final conditionalNode = manager.createConditionalFromBundle(
+      bundleId,
+      availableBundles,
+      condition,
+    );
+
+    return copyWith(logic: conditionalNode);
+  }
+
+  /// Gets complexity metrics for the conditional logic
+  int get conditionalLogicComplexity {
+    if (logic == null) return 0;
+
+    final manager = const ConditionalLogicManager();
+    return manager.validateLogic(this, [], {}).complexity;
+  }
+
   Map<String, dynamic> toJson() {
-    return {
+    final result = {
       'toggleId': toggleId,
       'stateId': stateId,
       'label': label,
@@ -293,12 +424,33 @@ class ToggleState {
       'commandBundles': commandBundles
           .map((bundle) => bundle.toJson())
           .toList(),
-      if (logic != null) 'logic': logic!.toJson(),
     };
+
+    if (logic != null) {
+      print('DEBUG JSON EXPORT: Using fullyResolvedLogic');
+      final resolved = fullyResolvedLogic.toJson();
+      print('DEBUG JSON EXPORT: Resolved logic keys=${(resolved as Map).keys.toList()}');
+      result['logic'] = resolved;
+    }
+
+    return result;
   }
 
   factory ToggleState.fromJson(Map<String, dynamic> json) {
     final bundlesJson = json['commandBundles'] as List<dynamic>? ?? <dynamic>[];
+    final hasLogicJson = json.containsKey('logic');
+    final logicJson = json['logic'];
+
+    print('DEBUG ToggleState.fromJson: toggleId="${json['toggleId']}", hasLogicJson=$hasLogicJson, logicJson=$logicJson');
+
+    final logic = json['logic'] == null
+        ? null
+        : SwitchHubLogicNode.fromJson(
+            Map<String, dynamic>.from(json['logic'] as Map),
+          );
+
+    print('DEBUG ToggleState.fromJson: parsed logic=$logic');
+
     return ToggleState(
       toggleId: json['toggleId'] as String,
       stateId: json['stateId'] as String,
@@ -310,11 +462,7 @@ class ToggleState {
                 CommandBundle.fromJson(Map<String, dynamic>.from(entry as Map)),
           )
           .toList(),
-      logic: json['logic'] == null
-          ? null
-          : SwitchHubLogicNode.fromJson(
-              Map<String, dynamic>.from(json['logic'] as Map),
-            ),
+      logic: logic,
     );
   }
 }
@@ -393,12 +541,103 @@ class ToggleScene {
   final String? description;
   final bool isPublished;
 
-  bool get hasConditionalLogic => rules.isNotEmpty;
+  bool get hasConditionalLogic => rules.isNotEmpty || states.any((state) => state.hasConditionalLogic);
+
+  bool get hasModernConditionalLogic => states.any((state) => state.hasConditionalLogic);
 
   Set<String> get referencedControllers {
     return states.fold<Set<String>>(
       <String>{},
       (acc, state) => acc..addAll(state.referencedControllers),
+    );
+  }
+
+  /// Gets all unique toggle IDs referenced in conditional logic
+  Set<String> get conditionalToggleReferences {
+    final references = <String>{};
+    for (final state in states) {
+      if (state.hasConditionalLogic) {
+        final bundleRefs = state.conditionalBundleReferences;
+        for (final bundleId in bundleRefs) {
+          // Extract toggle references from bundle (simplified approach)
+          references.add(state.toggleId);
+        }
+      }
+    }
+    return references;
+  }
+
+  /// Validates all conditional logic in the scene
+  Map<String, ConditionalValidationResult> validateAllConditionalLogic() {
+    final results = <String, ConditionalValidationResult>{};
+    final availableToggles = states.map((s) => s.toggleId).toSet().toList();
+
+    // Build aliases map from states
+    final aliases = <String, String>{};
+    // TODO: Extract actual aliases from state configuration
+
+    for (final state in states) {
+      if (state.hasConditionalLogic) {
+        final result = state.validateConditionalLogic(availableToggles, aliases);
+        results['${state.toggleId}.${state.stateId}'] = result;
+      }
+    }
+
+    return results;
+  }
+
+  /// Gets total complexity of all conditional logic in the scene
+  int get totalConditionalLogicComplexity {
+    return states.fold(0, (sum, state) => sum + state.conditionalLogicComplexity);
+  }
+
+  /// Gets states with conditional logic
+  List<ToggleState> get statesWithConditionalLogic {
+    return states.where((state) => state.hasConditionalLogic).toList();
+  }
+
+  /// Gets states without conditional logic (traditional states)
+  List<ToggleState> get statesWithoutConditionalLogic {
+    return states.where((state) => !state.hasConditionalLogic).toList();
+  }
+
+  /// Migrates legacy ConditionalRule to modern SwitchHubIfNode
+  ToggleScene migrateLegacyConditionalRules() {
+    if (rules.isEmpty) return this;
+
+    final migratedStates = <ToggleState>[];
+    final processedRules = <String>{};
+
+    for (final rule in rules) {
+      if (!processedRules.contains(rule.id)) {
+        // Find the state that this rule applies to
+        final targetState = states.where((state) =>
+          state.toggleId == rule.toggleId && state.stateId == rule.expectedStateId
+        ).firstOrNull;
+
+        if (targetState != null) {
+          final condition = '${rule.toggleId}.${rule.expectedStateId}';
+          final migratedState = targetState.withConditionalRule(
+            rule.trueBundleId,
+            condition,
+            targetState.commandBundles,
+          );
+
+          migratedStates.add(migratedState);
+          processedRules.add(rule.id);
+        }
+      }
+    }
+
+    // Replace old states with migrated ones and remove old rules
+    return copyWith(
+      states: states.map((state) {
+        final migrated = migratedStates.where((ms) =>
+          ms.toggleId == state.toggleId && ms.stateId == state.stateId
+        ).firstOrNull;
+        return migrated ?? state;
+      }).toList(),
+      rules: [], // Remove legacy rules after migration
     );
   }
 

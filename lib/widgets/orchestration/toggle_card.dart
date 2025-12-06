@@ -7,6 +7,7 @@ import 'package:app/providers/status_orchestration_provider.dart';
 
 typedef ToggleStateChanged = void Function(String stateId);
 typedef ToggleActionPressed = void Function(CommandBundle bundle);
+typedef ToggleConditionalRulePressed = void Function(ToggleState state);
 
 class ToggleCard extends StatelessWidget {
   const ToggleCard({
@@ -17,6 +18,7 @@ class ToggleCard extends StatelessWidget {
     required this.onStateChanged,
     this.onAddCommandBundle,
     this.onEditBundle,
+    this.onAddConditionalRule,
     this.controllerAliases = const <String, String>{},
     this.missingControllers = const <String>{},
     this.switchSlot,
@@ -29,6 +31,7 @@ class ToggleCard extends StatelessWidget {
   final ToggleStateChanged onStateChanged;
   final VoidCallback? onAddCommandBundle;
   final ToggleActionPressed? onEditBundle;
+  final ToggleConditionalRulePressed? onAddConditionalRule;
   final Map<String, String> controllerAliases;
   final Set<String> missingControllers;
   final int? switchSlot;
@@ -55,12 +58,29 @@ class ToggleCard extends StatelessWidget {
               children: [
                 Text(toggleId, style: theme.textTheme.titleMedium),
                 const SizedBox(height: 4),
-                Text(
-                  '${states.length} 状态 · '
-                  '${currentState.commandBundles.length} 个命令组合 · '
-                  '位号: ${switchSlot ?? '自动'}',
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: theme.textTheme.bodySmall?.color?.withValues(alpha: 0.7),
+                RichText(
+                  text: TextSpan(
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.textTheme.bodySmall?.color?.withValues(alpha: 0.7),
+                    ),
+                    children: [
+                      TextSpan(text: '${states.length} 状态 · '),
+                      TextSpan(text: '${currentState.commandBundles.length} 个命令组合'),
+                      if (currentState.hasConditionalLogic) ...[
+                        const WidgetSpan(child: SizedBox(width: 4)),
+                        WidgetSpan(
+                          alignment: PlaceholderAlignment.middle,
+                          child: Icon(
+                            Icons.code,
+                            size: 14,
+                            color: Theme.of(context).colorScheme.primary,
+                          ),
+                        ),
+                        TextSpan(text: ' 条件逻辑'),
+                      ],
+                      const WidgetSpan(child: SizedBox(width: 4)),
+                      TextSpan(text: '· 位号: ${switchSlot ?? '自动'}'),
+                    ],
                   ),
                 ),
                 const SizedBox(height: 12),
@@ -84,18 +104,31 @@ class ToggleCard extends StatelessWidget {
                   controllerAliases: controllerAliases,
                   missingControllers: missingControllers,
                 ),
-                if (onAddCommandBundle != null)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 12),
-                    child: Align(
-                      alignment: Alignment.centerRight,
-                      child: OutlinedButton.icon(
-                        onPressed: onAddCommandBundle,
-                        icon: const Icon(Icons.add),
-                        label: const Text('新增命令组合'),
-                      ),
-                    ),
+                Padding(
+                  padding: const EdgeInsets.only(top: 12),
+                  child: Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    alignment: WrapAlignment.end,
+                    children: [
+                      if (onAddConditionalRule != null)
+                        OutlinedButton.icon(
+                          onPressed: () => onAddConditionalRule!(currentState),
+                          icon: Icon(
+                            currentState.hasConditionalLogic ? Icons.edit : Icons.code,
+                            size: 18,
+                          ),
+                          label: Text(currentState.hasConditionalLogic ? '编辑条件' : '添加条件'),
+                        ),
+                      if (onAddCommandBundle != null)
+                        OutlinedButton.icon(
+                          onPressed: onAddCommandBundle,
+                          icon: const Icon(Icons.add),
+                          label: const Text('新增命令组合'),
+                        ),
+                    ],
                   ),
+                ),
               ],
             ),
           ),
