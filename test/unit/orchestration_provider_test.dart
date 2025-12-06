@@ -250,6 +250,138 @@ void main() {
     expect(action.presetId, equals(5));
   });
 
+  test('command action with gradient mode preserves all parameters', () {
+    // Create a gradient mode action
+    final action = CommandAction(
+      controllerId: 'controller-c',
+      type: CommandActionType.gradientMode,
+      channel: 2,
+      value: 180,
+      duration: 2500,
+    );
+
+    // Verify all parameters are preserved
+    expect(action.controllerId, equals('controller-c'));
+    expect(action.type, equals(CommandActionType.gradientMode));
+    expect(action.channel, equals(2));
+    expect(action.value, equals(180));
+    expect(action.duration, equals(2500));
+  });
+
+  test('command action with blink mode preserves all parameters', () {
+    // Create a blink mode action
+    final action = CommandAction(
+      controllerId: 'controller-d',
+      type: CommandActionType.blinkMode,
+      channel: 3,
+      period: 750,
+    );
+
+    // Verify all parameters are preserved
+    expect(action.controllerId, equals('controller-d'));
+    expect(action.type, equals(CommandActionType.blinkMode));
+    expect(action.channel, equals(3));
+    expect(action.period, equals(750));
+  });
+
+  test('command action with strobe mode preserves all parameters', () {
+    // Create a strobe mode action
+    final action = CommandAction(
+      controllerId: 'controller-e',
+      type: CommandActionType.strobeMode,
+      channel: 4,
+      count: 8,
+      totalTime: 4000,
+      pauseTime: 800,
+    );
+
+    // Verify all parameters are preserved
+    expect(action.controllerId, equals('controller-e'));
+    expect(action.type, equals(CommandActionType.strobeMode));
+    expect(action.channel, equals(4));
+    expect(action.count, equals(8));
+    expect(action.totalTime, equals(4000));
+    expect(action.pauseTime, equals(800));
+  });
+
+  test('orchestration provider handles scenes with mixed dynamic actions', () async {
+    // Create a scene with mixed action types
+    final mixedScene = ToggleScene(
+      id: 'scene-mixed',
+      name: 'Mixed Dynamic Actions Scene',
+      states: [
+        ToggleState(
+          toggleId: 'toggle-mixed',
+          stateId: 'mixed-on',
+          label: 'Mixed On',
+          commandBundles: [
+            CommandBundle(
+              id: 'bundle-mixed',
+              label: 'Mixed bundle',
+              actions: [
+                // Static channel value
+                CommandAction(
+                  controllerId: 'controller-static',
+                  type: CommandActionType.channelValue,
+                  channel: 0,
+                  value: 255,
+                ),
+                // Gradient fade
+                CommandAction(
+                  controllerId: 'controller-gradient',
+                  type: CommandActionType.gradientMode,
+                  channel: 1,
+                  value: 200,
+                  duration: 2000,
+                ),
+                // Blink pattern
+                CommandAction(
+                  controllerId: 'controller-blink',
+                  type: CommandActionType.blinkMode,
+                  channel: 2,
+                  period: 1000,
+                ),
+                // Strobe effect
+                CommandAction(
+                  controllerId: 'controller-strobe',
+                  type: CommandActionType.strobeMode,
+                  channel: 3,
+                  count: 5,
+                  totalTime: 1500,
+                  pauseTime: 300,
+                ),
+                // Preset trigger
+                CommandAction(
+                  controllerId: 'controller-preset',
+                  type: CommandActionType.presetTrigger,
+                  presetId: 2,
+                ),
+              ],
+            ),
+          ],
+        ),
+      ],
+      rules: [],
+    );
+
+    // Save and test the scene
+    await provider.saveScene(mixedScene);
+    provider.selectScene('scene-mixed');
+
+    final preview = provider.previewScene('scene-mixed', toggleId: 'toggle-mixed', stateId: 'mixed-on');
+
+    expect(preview.actions, hasLength(5));
+    expect(preview.hasWarnings, isFalse);
+
+    // Verify each action type is properly handled
+    final actions = preview.actions;
+    expect(actions[0].type, equals(CommandActionType.channelValue));
+    expect(actions[1].type, equals(CommandActionType.gradientMode));
+    expect(actions[2].type, equals(CommandActionType.blinkMode));
+    expect(actions[3].type, equals(CommandActionType.strobeMode));
+    expect(actions[4].type, equals(CommandActionType.presetTrigger));
+  });
+
   test(
     'updateToggleSlot enforces unique assignment and custom numbering',
     () async {

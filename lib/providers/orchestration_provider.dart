@@ -5,6 +5,9 @@ import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:app/models/orchestration/toggle_scene.dart';
 import 'package:app/models/orchestration/execution_log_entry.dart';
 import 'package:app/models/control_command/set_command.dart';
+import 'package:app/models/control_command/fade_command.dart';
+import 'package:app/models/control_command/blink_command.dart';
+import 'package:app/models/control_command/strobe_command.dart';
 import 'package:app/services/storage_service.dart';
 import 'package:app/services/ble_service.dart';
 import 'package:app/services/switch_hub_ble_service.dart';
@@ -653,6 +656,30 @@ class OrchestrationProvider with ChangeNotifier {
               );
               await _bleService.sendSetCommand(command);
               break;
+            case CommandActionType.gradientMode:
+              final command = FadeCommand(
+                channel: action.channel!,
+                targetValue: action.value!,
+                duration: action.duration!,
+              );
+              await _bleService.sendFadeCommand(command);
+              break;
+            case CommandActionType.blinkMode:
+              final command = BlinkCommand(
+                channel: action.channel!,
+                period: action.period!,
+              );
+              await _bleService.sendBlinkCommand(command);
+              break;
+            case CommandActionType.strobeMode:
+              final command = StrobeCommand(
+                channel: action.channel!,
+                flashCount: action.count!,
+                totalDuration: action.totalTime!,
+                pauseDuration: action.pauseTime!,
+              );
+              await _bleService.sendStrobeCommand(command);
+              break;
             case CommandActionType.presetTrigger:
               debugPrint('Preset trigger action is no longer supported');
               break;
@@ -748,19 +775,49 @@ List<SwitchHubSequenceItem> _sequencesFromActions(List<CommandAction> actions) {
   grouped.forEach((controllerId, controllerActions) {
     final packets = <SwitchHubCommandPacket>[];
     for (final action in controllerActions) {
-      if (action.type != CommandActionType.channelValue) {
-        continue;
+      int mode;
+      List<int> payload;
+
+      switch (action.type) {
+        case CommandActionType.channelValue:
+          if (action.channel == null || action.value == null) continue;
+          mode = 0x00;
+          payload = [action.value! & 0xFF];
+          break;
+
+        case CommandActionType.gradientMode:
+          if (action.channel == null || action.value == null || action.duration == null) continue;
+          mode = 0x01;
+          payload = [action.value! & 0xFF, (action.duration! >> 8) & 0xFF, action.duration! & 0xFF];
+          break;
+
+        case CommandActionType.blinkMode:
+          if (action.channel == null || action.period == null) continue;
+          mode = 0x02;
+          payload = [(action.period! >> 8) & 0xFF, action.period! & 0xFF];
+          break;
+
+        case CommandActionType.strobeMode:
+          if (action.channel == null || action.count == null || action.totalTime == null || action.pauseTime == null) continue;
+          mode = 0x03;
+          payload = [
+            action.count! & 0xFF,
+            (action.totalTime! >> 8) & 0xFF,
+            action.totalTime! & 0xFF,
+            (action.pauseTime! >> 8) & 0xFF,
+            action.pauseTime! & 0xFF,
+          ];
+          break;
+
+        case CommandActionType.presetTrigger:
+          continue; // Skip preset trigger actions for now
       }
-      final channel = action.channel;
-      final value = action.value;
-      if (channel == null || value == null) {
-        continue;
-      }
+
       packets.add(
         SwitchHubCommandPacket(
-          mode: 0x00,
-          channel: channel,
-          payload: base64Encode([value & 0xFF]),
+          mode: mode,
+          channel: action.channel!,
+          payload: base64Encode(payload),
         ),
       );
     }

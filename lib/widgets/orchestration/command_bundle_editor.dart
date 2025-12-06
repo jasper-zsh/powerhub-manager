@@ -82,6 +82,12 @@ class CommandBundleEditor extends StatelessWidget {
         return 'Set channel ${action.channel} to ${action.value}';
       case CommandActionType.presetTrigger:
         return 'Trigger preset ${action.presetId}';
+      case CommandActionType.gradientMode:
+        return 'Gradient channel ${action.channel} to ${action.value} over ${action.duration}ms';
+      case CommandActionType.blinkMode:
+        return 'Blink channel ${action.channel} with ${action.period}ms period';
+      case CommandActionType.strobeMode:
+        return 'Strobe channel ${action.channel}: ${action.count} flashes in ${action.totalTime}ms with ${action.pauseTime}ms pause';
     }
   }
 }

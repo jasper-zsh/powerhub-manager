@@ -216,9 +216,7 @@ class _CommandBundleList extends StatelessWidget {
             final controllerLabel = alias != null
                 ? '${action.controllerId} ($alias)'
                 : action.controllerId;
-            final description = action.type == CommandActionType.channelValue
-                ? '通道 ${action.channel} → ${action.value}'
-                : '触发预设 ${action.presetId}';
+            final description = action.chineseDescription;
             final isMissing = missingControllers.contains(action.controllerId);
             return Text(
               '$controllerLabel · $description',
@@ -266,4 +264,5 @@ class _CommandBundleList extends StatelessWidget {
       }).toList(),
     );
   }
-}
+
+  }

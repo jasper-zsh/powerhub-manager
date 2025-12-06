@@ -2,6 +2,9 @@ import 'dart:async';
 
 import 'package:app/models/orchestration/toggle_scene.dart';
 import 'package:app/models/control_command/set_command.dart';
+import 'package:app/models/control_command/fade_command.dart';
+import 'package:app/models/control_command/blink_command.dart';
+import 'package:app/models/control_command/strobe_command.dart';
 import 'package:app/services/ble_service.dart';
 
 /// 抽象接口，用于与 SwitchHub 设备进行命令交互
@@ -230,6 +233,34 @@ class BleSwitchHubCommandService implements SwitchHubCommandService {
         // 实现预设触发的 BLE 命令
         if (action.presetId != null) {
           // TODO: 实现预设触发逻辑
+        }
+        break;
+      case CommandActionType.gradientMode:
+        if (action.channel != null && action.value != null && action.duration != null) {
+          await _bleService.sendFadeCommand(FadeCommand(
+            channel: action.channel!,
+            targetValue: action.value!,
+            duration: action.duration!,
+          ));
+        }
+        break;
+      case CommandActionType.blinkMode:
+        if (action.channel != null && action.period != null) {
+          await _bleService.sendBlinkCommand(BlinkCommand(
+            channel: action.channel!,
+            period: action.period!,
+          ));
+        }
+        break;
+      case CommandActionType.strobeMode:
+        if (action.channel != null && action.count != null &&
+            action.totalTime != null && action.pauseTime != null) {
+          await _bleService.sendStrobeCommand(StrobeCommand(
+            channel: action.channel!,
+            flashCount: action.count!,
+            totalDuration: action.totalTime!,
+            pauseDuration: action.pauseTime!,
+          ));
         }
         break;
     }

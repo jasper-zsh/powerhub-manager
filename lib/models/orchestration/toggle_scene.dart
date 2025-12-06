@@ -8,7 +8,7 @@ import 'package:app/models/switch_hub/switch_definition.dart';
 import 'package:app/models/switch_hub/ui_config.dart';
 import 'package:app/models/switch_hub/status_slot_config.dart';
 
-enum CommandActionType { channelValue, presetTrigger }
+enum CommandActionType { channelValue, presetTrigger, gradientMode, blinkMode, strobeMode }
 
 CommandActionType _commandActionTypeFromString(String value) {
   return CommandActionType.values.firstWhere(
@@ -24,6 +24,12 @@ class CommandAction {
     this.channel,
     this.value,
     this.presetId,
+    // Dynamic mode parameters
+    this.duration,      // For gradientMode (ms)
+    this.period,        // For blinkMode (ms)
+    this.count,         // For strobeMode
+    this.totalTime,     // For strobeMode (ms)
+    this.pauseTime,     // For strobeMode (ms)
   }) {
     if (type == CommandActionType.channelValue) {
       assert(channel != null, 'Channel actions require a channel id');
@@ -32,6 +38,21 @@ class CommandAction {
     if (type == CommandActionType.presetTrigger) {
       assert(presetId != null, 'Preset trigger actions require a presetId');
     }
+    if (type == CommandActionType.gradientMode) {
+      assert(channel != null, 'Gradient mode actions require a channel id');
+      assert(value != null, 'Gradient mode actions require a target value');
+      assert(duration != null, 'Gradient mode actions require a duration');
+    }
+    if (type == CommandActionType.blinkMode) {
+      assert(channel != null, 'Blink mode actions require a channel id');
+      assert(period != null, 'Blink mode actions require a period');
+    }
+    if (type == CommandActionType.strobeMode) {
+      assert(channel != null, 'Strobe mode actions require a channel id');
+      assert(count != null, 'Strobe mode actions require a count');
+      assert(totalTime != null, 'Strobe mode actions require total time');
+      assert(pauseTime != null, 'Strobe mode actions require pause time');
+    }
   }
 
   final String controllerId;
@@ -39,6 +60,12 @@ class CommandAction {
   final int? channel;
   final int? value;
   final int? presetId;
+  // Dynamic mode parameters
+  final int? duration;      // For gradientMode (ms)
+  final int? period;        // For blinkMode (ms)
+  final int? count;         // For strobeMode
+  final int? totalTime;     // For strobeMode (ms)
+  final int? pauseTime;     // For strobeMode (ms)
 
   CommandAction copyWith({
     String? controllerId,
@@ -46,19 +73,43 @@ class CommandAction {
     int? channel,
     int? value,
     int? presetId,
+    int? duration,
+    int? period,
+    int? count,
+    int? totalTime,
+    int? pauseTime,
   }) {
     final resolvedType = type ?? this.type;
     return CommandAction(
       controllerId: controllerId ?? this.controllerId,
       type: resolvedType,
-      channel: resolvedType == CommandActionType.channelValue
+      channel: (resolvedType == CommandActionType.channelValue ||
+                resolvedType == CommandActionType.gradientMode ||
+                resolvedType == CommandActionType.blinkMode ||
+                resolvedType == CommandActionType.strobeMode)
           ? (channel ?? this.channel)
           : null,
-      value: resolvedType == CommandActionType.channelValue
+      value: (resolvedType == CommandActionType.channelValue ||
+               resolvedType == CommandActionType.gradientMode)
           ? (value ?? this.value)
           : null,
       presetId: resolvedType == CommandActionType.presetTrigger
           ? (presetId ?? this.presetId)
+          : null,
+      duration: resolvedType == CommandActionType.gradientMode
+          ? (duration ?? this.duration)
+          : null,
+      period: resolvedType == CommandActionType.blinkMode
+          ? (period ?? this.period)
+          : null,
+      count: resolvedType == CommandActionType.strobeMode
+          ? (count ?? this.count)
+          : null,
+      totalTime: resolvedType == CommandActionType.strobeMode
+          ? (totalTime ?? this.totalTime)
+          : null,
+      pauseTime: resolvedType == CommandActionType.strobeMode
+          ? (pauseTime ?? this.pauseTime)
           : null,
     );
   }
@@ -70,6 +121,12 @@ class CommandAction {
       'channel': channel,
       'value': value,
       'presetId': presetId,
+      // Dynamic mode parameters
+      'duration': duration,
+      'period': period,
+      'count': count,
+      'totalTime': totalTime,
+      'pauseTime': pauseTime,
     };
   }
 
@@ -80,7 +137,45 @@ class CommandAction {
       channel: json['channel'] as int?,
       value: json['value'] as int?,
       presetId: json['presetId'] as int?,
+      // Dynamic mode parameters
+      duration: json['duration'] as int?,
+      period: json['period'] as int?,
+      count: json['count'] as int?,
+      totalTime: json['totalTime'] as int?,
+      pauseTime: json['pauseTime'] as int?,
     );
+  }
+
+  /// Get English description of this action
+  String get description {
+    switch (type) {
+      case CommandActionType.channelValue:
+        return 'Channel ${channel} → ${value}';
+      case CommandActionType.presetTrigger:
+        return 'Trigger preset ${presetId}';
+      case CommandActionType.gradientMode:
+        return 'Gradient: Channel ${channel} → ${value} (${duration}ms)';
+      case CommandActionType.blinkMode:
+        return 'Blink: Channel ${channel} (${period}ms period)';
+      case CommandActionType.strobeMode:
+        return 'Strobe: Channel ${channel} (${count} flashes, ${totalTime}ms, ${pauseTime}ms pause)';
+    }
+  }
+
+  /// Get Chinese description of this action
+  String get chineseDescription {
+    switch (type) {
+      case CommandActionType.channelValue:
+        return '通道 ${channel} → ${value}';
+      case CommandActionType.presetTrigger:
+        return '触发预设 ${presetId}';
+      case CommandActionType.gradientMode:
+        return '渐变: 通道${channel} → ${value} (${duration}ms)';
+      case CommandActionType.blinkMode:
+        return '闪烁: 通道${channel} (${period}ms周期)';
+      case CommandActionType.strobeMode:
+        return '频闪: 通道${channel} (${count}次闪, ${totalTime}ms, ${pauseTime}ms暂停)';
+    }
   }
 }
 
@@ -499,21 +594,83 @@ List<SwitchHubSequenceItem> _sequenceFromBundle(CommandBundle bundle) {
   grouped.forEach((controllerId, actions) {
     final packets = <SwitchHubCommandPacket>[];
     for (final action in actions) {
-      if (action.type != CommandActionType.channelValue) {
-        continue;
-      }
-      final value = action.value;
       final channel = action.channel;
-      if (value == null || channel == null) {
+      if (channel == null) {
         continue;
       }
-      packets.add(
-        SwitchHubCommandPacket(
-          mode: 0x00,
-          channel: channel,
-          payload: base64Encode([value & 0xFF]),
-        ),
-      );
+
+      switch (action.type) {
+        case CommandActionType.channelValue:
+          final value = action.value;
+          if (value != null) {
+            packets.add(
+              SwitchHubCommandPacket(
+                mode: 0x00,
+                channel: channel,
+                payload: base64Encode([value & 0xFF]),
+              ),
+            );
+          }
+          break;
+
+        case CommandActionType.gradientMode:
+          final value = action.value;
+          final duration = action.duration;
+          if (value != null && duration != null) {
+            // Gradient mode: [0x01][channel][value][duration_high][duration_low]
+            final durationHigh = (duration >> 8) & 0xFF;
+            final durationLow = duration & 0xFF;
+            packets.add(
+              SwitchHubCommandPacket(
+                mode: 0x01,
+                channel: channel,
+                payload: base64Encode([value & 0xFF, durationHigh, durationLow]),
+              ),
+            );
+          }
+          break;
+
+        case CommandActionType.blinkMode:
+          final period = action.period;
+          if (period != null) {
+            // Blink mode: [0x02][channel][period_high][period_low]
+            final periodHigh = (period >> 8) & 0xFF;
+            final periodLow = period & 0xFF;
+            packets.add(
+              SwitchHubCommandPacket(
+                mode: 0x02,
+                channel: channel,
+                payload: base64Encode([periodHigh, periodLow]),
+              ),
+            );
+          }
+          break;
+
+        case CommandActionType.strobeMode:
+          final count = action.count;
+          final totalTime = action.totalTime;
+          final pauseTime = action.pauseTime;
+          if (count != null && totalTime != null && pauseTime != null) {
+            // Strobe mode: [0x03][channel][count][total_time_high][total_time_low][pause_time_high][pause_time_low]
+            final totalTimeHigh = (totalTime >> 8) & 0xFF;
+            final totalTimeLow = totalTime & 0xFF;
+            final pauseTimeHigh = (pauseTime >> 8) & 0xFF;
+            final pauseTimeLow = pauseTime & 0xFF;
+            packets.add(
+              SwitchHubCommandPacket(
+                mode: 0x03,
+                channel: channel,
+                payload: base64Encode([count & 0xFF, totalTimeHigh, totalTimeLow, pauseTimeHigh, pauseTimeLow]),
+              ),
+            );
+          }
+          break;
+
+        case CommandActionType.presetTrigger:
+          // Preset triggers don't generate BLE packets for sequence generation
+          // They are handled separately in the orchestration provider
+          break;
+      }
     }
     if (packets.isNotEmpty) {
       items.add(

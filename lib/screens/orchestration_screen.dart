@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:app/models/orchestration/toggle_scene.dart';
+import 'package:app/models/orchestration/action_validator.dart';
 import 'package:app/providers/orchestration_provider.dart';
 import 'package:app/providers/orchestration_provider_riverpod.dart';
 import 'package:app/providers/status_orchestration_provider.dart';
@@ -248,7 +249,8 @@ class _OrchestrationScreenState extends ConsumerState<OrchestrationScreen> {
 
     // Get status configuration from the orchestration provider
     final statusConfigurations = ref.watch(statusConfigurationsProvider);
-    final statusConfiguration = statusConfigurations[int.tryParse(toggleId) ?? 0];
+    final statusConfiguration =
+        statusConfigurations[int.tryParse(toggleId) ?? 0];
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -887,9 +889,7 @@ class _OrchestrationScreenState extends ConsumerState<OrchestrationScreen> {
                       (entry) => ListTile(
                         contentPadding: EdgeInsets.zero,
                         title: Text(entry.value.controllerId),
-                        subtitle: Text(
-                          'Channel ${entry.value.channel} → ${entry.value.value}',
-                        ),
+                        subtitle: Text(entry.value.chineseDescription),
                         trailing: Wrap(
                           spacing: 4,
                           children: [
@@ -986,9 +986,20 @@ class _OrchestrationScreenState extends ConsumerState<OrchestrationScreen> {
     final savedControllers = ref
         .read(savedControllerControllerProvider)
         .controllers;
+
+    // Initialize form values
+    CommandActionType selectedType =
+        existing?.type ?? CommandActionType.channelValue;
     String controllerId = existing?.controllerId ?? '';
     String channelText = existing?.channel?.toString() ?? '';
     String valueText = existing?.value?.toString() ?? '';
+    String durationText = existing?.duration?.toString() ?? '';
+    String periodText = existing?.period?.toString() ?? '';
+    String countText = existing?.count?.toString() ?? '';
+    String totalTimeText = existing?.totalTime?.toString() ?? '';
+    String pauseTimeText = existing?.pauseTime?.toString() ?? '';
+    String presetIdText = existing?.presetId?.toString() ?? '';
+
     String? selectedSavedControllerId =
         savedControllers.any(
           (controller) => controller.controllerId == controllerId,
@@ -997,6 +1008,8 @@ class _OrchestrationScreenState extends ConsumerState<OrchestrationScreen> {
         : null;
 
     CommandAction? result;
+
+    // Show the dialog
     await showDialog<void>(
       context: context,
       builder: (context) {
@@ -1004,60 +1017,457 @@ class _OrchestrationScreenState extends ConsumerState<OrchestrationScreen> {
         return StatefulBuilder(
           builder: (context, setDialogState) => AlertDialog(
             title: Text(existing == null ? '新增动作' : '编辑动作'),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextFormField(
-                  initialValue: controllerId,
-                  decoration: const InputDecoration(labelText: '目标控制器 MAC'),
-                  onChanged: (value) => controllerId = value,
-                ),
-                if (savedControllers.isNotEmpty)
-                  DropdownButtonFormField<String>(
-                    value: selectedSavedControllerId,
-                    decoration: const InputDecoration(labelText: '从已保存设备选择'),
-                    items: savedControllers
-                        .map(
-                          (controller) => DropdownMenuItem<String>(
-                            value: controller.controllerId,
-                            child: Text(
-                              controller.alias.isEmpty
-                                  ? controller.controllerId
-                                  : '${controller.alias} (${controller.controllerId})',
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Controller selection
+                  TextFormField(
+                    initialValue: controllerId,
+                    decoration: const InputDecoration(
+                      labelText: '目标控制器 MAC',
+                      helperText: '控制器的蓝牙MAC地址',
+                    ),
+                    onChanged: (value) => controllerId = value,
+                  ),
+                  if (savedControllers.isNotEmpty)
+                    DropdownButtonFormField<String>(
+                      value: selectedSavedControllerId,
+                      decoration: const InputDecoration(labelText: '从已保存设备选择'),
+                      items: savedControllers
+                          .map(
+                            (controller) => DropdownMenuItem<String>(
+                              value: controller.controllerId,
+                              child: Text(
+                                controller.alias.isEmpty
+                                    ? controller.controllerId
+                                    : '${controller.alias} (${controller.controllerId})',
+                              ),
                             ),
-                          ),
-                        )
-                        .toList(),
+                          )
+                          .toList(),
+                      onChanged: (value) {
+                        setDialogState(() {
+                          selectedSavedControllerId = value;
+                          controllerId = value ?? controllerId;
+                        });
+                      },
+                    ),
+                  const SizedBox(height: 16),
+
+                  // Action type selector
+                  DropdownButtonFormField<CommandActionType>(
+                    value: selectedType,
+                    decoration: const InputDecoration(
+                      labelText: '动作类型',
+                      helperText: '选择要执行的动作类型',
+                    ),
+                    items: CommandActionType.values.map((type) {
+                      String label;
+                      String description;
+
+                      switch (type) {
+                        case CommandActionType.channelValue:
+                          label = '设置通道值';
+                          description = '立即设置通道为指定值 (0-255)';
+                          break;
+                        case CommandActionType.presetTrigger:
+                          label = '触发预设';
+                          description = '激活预设配置';
+                          break;
+                        case CommandActionType.gradientMode:
+                          label = '渐变模式';
+                          description = '平滑过渡到目标值';
+                          break;
+                        case CommandActionType.blinkMode:
+                          label = '闪烁模式';
+                          description = '周期性开关闪烁';
+                          break;
+                        case CommandActionType.strobeMode:
+                          label = '频闪模式';
+                          description = '快速闪烁效果';
+                          break;
+                      }
+
+                      return DropdownMenuItem<CommandActionType>(
+                        value: type,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              label,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            Text(
+                              description,
+                              style: const TextStyle(
+                                fontSize: 12,
+                                color: Colors.grey,
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    }).toList(),
                     onChanged: (value) {
-                      setDialogState(() {
-                        selectedSavedControllerId = value;
-                        controllerId = value ?? controllerId;
-                      });
+                      if (value != null) {
+                        setDialogState(() {
+                          selectedType = value;
+                          errorMessage = null; // Clear error when type changes
+                        });
+                      }
                     },
                   ),
-                TextFormField(
-                  initialValue: channelText,
-                  keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(labelText: '通道 (0-15)'),
-                  onChanged: (value) => channelText = value,
-                ),
-                TextFormField(
-                  initialValue: valueText,
-                  keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(labelText: '值 (0-255)'),
-                  onChanged: (value) => valueText = value,
-                ),
-                if (errorMessage != null)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 8),
-                    child: Text(
-                      errorMessage!,
-                      style: TextStyle(
-                        color: Theme.of(context).colorScheme.error,
+                  const SizedBox(height: 16),
+
+                  // Channel field (common to most types)
+                  if (selectedType != CommandActionType.presetTrigger)
+                    TextFormField(
+                      initialValue: channelText,
+                      keyboardType: TextInputType.number,
+                      decoration: InputDecoration(
+                        labelText: '通道',
+                        helperText: '目标通道 (0-5)',
+                        errorText:
+                            channelText.isNotEmpty &&
+                                (int.tryParse(channelText) == null ||
+                                    int.parse(channelText) < 0 ||
+                                    int.parse(channelText) > 5)
+                            ? '通道必须在 0-5 之间'
+                            : null,
+                      ),
+                      onChanged: (value) {
+                        channelText = value;
+                        setDialogState(() {}); // Rebuild to show validation
+                      },
+                    ),
+
+                  // Dynamic mode specific fields
+                  if (selectedType == CommandActionType.channelValue) ...[
+                    const SizedBox(height: 8),
+                    TextFormField(
+                      initialValue: valueText,
+                      keyboardType: TextInputType.number,
+                      decoration: InputDecoration(
+                        labelText: '目标值',
+                        helperText: 'PWM 值 (0-255)',
+                        errorText:
+                            valueText.isNotEmpty &&
+                                (int.tryParse(valueText) == null ||
+                                    int.parse(valueText) < 0 ||
+                                    int.parse(valueText) > 255)
+                            ? '值必须在 0-255 之间'
+                            : null,
+                      ),
+                      onChanged: (value) {
+                        valueText = value;
+                        setDialogState(() {});
+                      },
+                    ),
+                  ] else if (selectedType ==
+                      CommandActionType.gradientMode) ...[
+                    const SizedBox(height: 8),
+                    TextFormField(
+                      initialValue: valueText,
+                      keyboardType: TextInputType.number,
+                      decoration: InputDecoration(
+                        labelText: '目标值',
+                        helperText: '渐变目标值 (0-255)',
+                        errorText:
+                            valueText.isNotEmpty &&
+                                (int.tryParse(valueText) == null ||
+                                    int.parse(valueText) < 0 ||
+                                    int.parse(valueText) > 255)
+                            ? '值必须在 0-255 之间'
+                            : null,
+                      ),
+                      onChanged: (value) {
+                        valueText = value;
+                        setDialogState(() {});
+                      },
+                    ),
+                    const SizedBox(height: 16),
+                    TextFormField(
+                      initialValue: durationText,
+                      keyboardType: TextInputType.number,
+                      decoration: InputDecoration(
+                        labelText: '渐变时间',
+                        helperText: '渐变持续时间，单位毫秒 (1000-60000)',
+                        errorText:
+                            durationText.isNotEmpty &&
+                                (int.tryParse(durationText) == null ||
+                                    int.parse(durationText) < 1 ||
+                                    int.parse(durationText) > 60000)
+                            ? '渐变时间必须在 1-60000 毫秒之间'
+                            : null,
+                      ),
+                      onChanged: (value) {
+                        durationText = value;
+                        setDialogState(() {});
+                      },
+                    ),
+                    // Helper examples
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: Colors.blue.shade50,
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '常用设置:',
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 12,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            '• 快速渐变: 500-2000ms',
+                            style: const TextStyle(fontSize: 11),
+                          ),
+                          Text(
+                            '• 中等渐变: 3000-5000ms',
+                            style: const TextStyle(fontSize: 11),
+                          ),
+                          Text(
+                            '• 慢速渐变: 8000-15000ms',
+                            style: const TextStyle(fontSize: 11),
+                          ),
+                        ],
                       ),
                     ),
-                  ),
-              ],
+                  ] else if (selectedType == CommandActionType.blinkMode) ...[
+                    const SizedBox(height: 8),
+                    TextFormField(
+                      initialValue: periodText,
+                      keyboardType: TextInputType.number,
+                      decoration: InputDecoration(
+                        labelText: '闪烁周期',
+                        helperText: '闪烁周期，单位毫秒 (50-10000)',
+                        errorText:
+                            periodText.isNotEmpty &&
+                                (int.tryParse(periodText) == null ||
+                                    int.parse(periodText) < 50 ||
+                                    int.parse(periodText) > 10000)
+                            ? '闪烁周期必须在 50-10000 毫秒之间'
+                            : null,
+                      ),
+                      onChanged: (value) {
+                        periodText = value;
+                        setDialogState(() {});
+                      },
+                    ),
+                    if (periodText.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        '闪烁频率: ${(1000 / int.parse(periodText)).toStringAsFixed(1)} Hz',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: Colors.blue,
+                        ),
+                      ),
+                    ],
+                    // Helper examples
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: Colors.green.shade50,
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '常用设置:',
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 12,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            '• 快速闪烁: 250-500ms (2-4Hz)',
+                            style: const TextStyle(fontSize: 11),
+                          ),
+                          Text(
+                            '• 中等闪烁: 1000-2000ms (0.5-1Hz)',
+                            style: const TextStyle(fontSize: 11),
+                          ),
+                          Text(
+                            '• 慢速闪烁: 3000-5000ms (0.2-0.33Hz)',
+                            style: const TextStyle(fontSize: 11),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ] else if (selectedType == CommandActionType.strobeMode) ...[
+                    const SizedBox(height: 8),
+                    TextFormField(
+                      initialValue: countText,
+                      keyboardType: TextInputType.number,
+                      decoration: InputDecoration(
+                        labelText: '闪烁次数',
+                        helperText: '闪烁次数 (1-255)',
+                        errorText:
+                            countText.isNotEmpty &&
+                                (int.tryParse(countText) == null ||
+                                    int.parse(countText) < 1 ||
+                                    int.parse(countText) > 255)
+                            ? '闪烁次数必须在 1-255 之间'
+                            : null,
+                      ),
+                      onChanged: (value) {
+                        countText = value;
+                        setDialogState(() {});
+                      },
+                    ),
+                    const SizedBox(height: 8),
+                    TextFormField(
+                      initialValue: totalTimeText,
+                      keyboardType: TextInputType.number,
+                      decoration: InputDecoration(
+                        labelText: '总时间',
+                        helperText: '总执行时间，单位毫秒 (10-60000)',
+                        errorText:
+                            totalTimeText.isNotEmpty &&
+                                (int.tryParse(totalTimeText) == null ||
+                                    int.parse(totalTimeText) < 10 ||
+                                    int.parse(totalTimeText) > 60000)
+                            ? '总时间必须在 10-60000 毫秒之间'
+                            : null,
+                      ),
+                      onChanged: (value) {
+                        totalTimeText = value;
+                        setDialogState(() {});
+                      },
+                    ),
+                    const SizedBox(height: 8),
+                    TextFormField(
+                      initialValue: pauseTimeText,
+                      keyboardType: TextInputType.number,
+                      decoration: InputDecoration(
+                        labelText: '暂停时间',
+                        helperText: '暂停时间，单位毫秒',
+                        errorText:
+                            pauseTimeText.isNotEmpty &&
+                                totalTimeText.isNotEmpty &&
+                                int.parse(pauseTimeText) >=
+                                    int.parse(totalTimeText)
+                            ? '暂停时间必须小于总时间'
+                            : null,
+                      ),
+                      onChanged: (value) {
+                        pauseTimeText = value;
+                        setDialogState(() {});
+                      },
+                    ),
+                    if (countText.isNotEmpty && totalTimeText.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        '闪烁频率: ${(int.parse(countText) * 1000 / int.parse(totalTimeText)).toStringAsFixed(1)} Hz',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: Colors.blue,
+                        ),
+                      ),
+                    ],
+                    // Helper examples
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: Colors.orange.shade50,
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '常用设置:',
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 12,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            '• 提醒闪烁: 3次，2秒总时长，500ms暂停',
+                            style: const TextStyle(fontSize: 11),
+                          ),
+                          Text(
+                            '• 警告频闪: 5次，3秒总时长，200ms暂停',
+                            style: const TextStyle(fontSize: 11),
+                          ),
+                          Text(
+                            '• 紧急闪烁: 10次，1秒总时长，50ms暂停',
+                            style: const TextStyle(fontSize: 11),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ] else if (selectedType ==
+                      CommandActionType.presetTrigger) ...[
+                    const SizedBox(height: 8),
+                    TextFormField(
+                      initialValue: presetIdText,
+                      keyboardType: TextInputType.number,
+                      decoration: InputDecoration(
+                        labelText: '预设ID',
+                        helperText: '要触发的预设配置ID (>= 0)',
+                        errorText:
+                            presetIdText.isNotEmpty &&
+                                (int.tryParse(presetIdText) == null ||
+                                    int.parse(presetIdText) < 0)
+                            ? '预设ID必须大于等于0'
+                            : null,
+                      ),
+                      onChanged: (value) {
+                        presetIdText = value;
+                        setDialogState(() {});
+                      },
+                    ),
+                  ],
+
+                  // Error message display
+                  if (errorMessage != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 16),
+                      child: Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: Colors.red.shade50,
+                          borderRadius: BorderRadius.circular(4),
+                          border: Border.all(color: Colors.red.shade200),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(
+                              Icons.error_outline,
+                              color: Colors.red.shade700,
+                              size: 16,
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                errorMessage!,
+                                style: TextStyle(
+                                  color: Colors.red.shade700,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                ],
+              ),
             ),
             actions: [
               TextButton(
@@ -1066,23 +1476,112 @@ class _OrchestrationScreenState extends ConsumerState<OrchestrationScreen> {
               ),
               ElevatedButton(
                 onPressed: () {
+                  // Validate and create action
                   final trimmedId = controllerId.trim();
-                  final channel = int.tryParse(channelText.trim());
-                  final value = int.tryParse(valueText.trim());
-                  if (trimmedId.isEmpty || channel == null || value == null) {
-                    setDialogState(() => errorMessage = '请填写完整信息');
+                  if (trimmedId.isEmpty) {
+                    setDialogState(() => errorMessage = '请输入控制器ID');
                     return;
                   }
-                  if (channel < 0 || channel > 15 || value < 0 || value > 255) {
-                    setDialogState(() => errorMessage = '通道或数值超出范围');
+
+                  // Create action based on type
+                  CommandAction? newAction;
+
+                  try {
+                    switch (selectedType) {
+                      case CommandActionType.channelValue:
+                        final channel = _parseIntField(channelText, '通道');
+                        final value = _parseIntField(valueText, '值');
+                        if (channel != null && value != null) {
+                          newAction = CommandAction(
+                            controllerId: trimmedId,
+                            type: selectedType,
+                            channel: channel,
+                            value: value,
+                          );
+                        }
+                        break;
+
+                      case CommandActionType.gradientMode:
+                        final channel = _parseIntField(channelText, '通道');
+                        final targetValue = _parseIntField(valueText, '目标值');
+                        final duration = _parseIntField(durationText, '渐变时间');
+                        if (channel != null &&
+                            targetValue != null &&
+                            duration != null) {
+                          newAction = CommandAction(
+                            controllerId: trimmedId,
+                            type: selectedType,
+                            channel: channel,
+                            value: targetValue,
+                            duration: duration,
+                          );
+                        }
+                        break;
+
+                      case CommandActionType.blinkMode:
+                        final channel = _parseIntField(channelText, '通道');
+                        final period = _parseIntField(periodText, '闪烁周期');
+                        if (channel != null && period != null) {
+                          newAction = CommandAction(
+                            controllerId: trimmedId,
+                            type: selectedType,
+                            channel: channel,
+                            period: period,
+                          );
+                        }
+                        break;
+
+                      case CommandActionType.strobeMode:
+                        final channel = _parseIntField(channelText, '通道');
+                        final count = _parseIntField(countText, '闪烁次数');
+                        final totalTime = _parseIntField(totalTimeText, '总时间');
+                        final pauseTime = _parseIntField(pauseTimeText, '暂停时间');
+                        if (channel != null &&
+                            count != null &&
+                            totalTime != null &&
+                            pauseTime != null) {
+                          newAction = CommandAction(
+                            controllerId: trimmedId,
+                            type: selectedType,
+                            channel: channel,
+                            count: count,
+                            totalTime: totalTime,
+                            pauseTime: pauseTime,
+                          );
+                        }
+                        break;
+
+                      case CommandActionType.presetTrigger:
+                        final presetId = _parseIntField(presetIdText, '预设ID');
+                        if (presetId != null) {
+                          newAction = CommandAction(
+                            controllerId: trimmedId,
+                            type: selectedType,
+                            presetId: presetId,
+                          );
+                        }
+                        break;
+                    }
+                  } catch (e) {
+                    setDialogState(
+                      () => errorMessage = '参数格式错误: ${e.toString()}',
+                    );
                     return;
                   }
-                  result = CommandAction(
-                    controllerId: trimmedId,
-                    type: CommandActionType.channelValue,
-                    channel: channel,
-                    value: value,
-                  );
+
+                  if (newAction == null) {
+                    setDialogState(() => errorMessage = '请填写完整的参数信息');
+                    return;
+                  }
+
+                  // Validate using ActionValidator
+                  final validationResult = ActionValidator.validate(newAction);
+                  if (validationResult != null) {
+                    setDialogState(() => errorMessage = validationResult);
+                    return;
+                  }
+
+                  result = newAction;
                   Navigator.of(context).pop();
                 },
                 child: const Text('保存'),
@@ -1094,6 +1593,15 @@ class _OrchestrationScreenState extends ConsumerState<OrchestrationScreen> {
     );
 
     return result;
+  }
+
+  // Helper method to parse integer field with error handling
+  int? _parseIntField(String text, String fieldName) {
+    final parsed = int.tryParse(text.trim());
+    if (parsed == null) {
+      throw Exception('$fieldName 必须是有效的整数');
+    }
+    return parsed;
   }
 
   Future<void> _previewState(String toggleId, String stateId) async {
@@ -1155,7 +1663,6 @@ class _OrchestrationScreenState extends ConsumerState<OrchestrationScreen> {
         '${dateTime.hour.toString().padLeft(2, '0')}:${dateTime.minute.toString().padLeft(2, '0')}';
   }
 
-  
   void _showSnack(String message) {
     if (!mounted) {
       return;
@@ -1213,8 +1720,12 @@ class _OrchestrationScreenState extends ConsumerState<OrchestrationScreen> {
             await provider.updateStatusSlots(toggleId, newSlots);
 
             // Reinitialize status orchestration with the updated scene
-            final statusProvider = ref.read(statusOrchestrationProvider.notifier);
-            final updatedSwitchHubConfig = provider.buildSwitchHubConfig(scene.id);
+            final statusProvider = ref.read(
+              statusOrchestrationProvider.notifier,
+            );
+            final updatedSwitchHubConfig = provider.buildSwitchHubConfig(
+              scene.id,
+            );
             await statusProvider.initialize(updatedSwitchHubConfig);
 
             _showSnack('状态显示配置已保存');
