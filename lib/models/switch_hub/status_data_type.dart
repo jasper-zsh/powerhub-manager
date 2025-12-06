@@ -3,7 +3,7 @@ enum StatusDataType {
   /// Local device input voltage (mV)
   voltage,
 
-  /// Specific channel current from PowerHub device (params: channel index)
+  /// Specific channel current from PowerHub device (params: channel index or comma-separated channel list for sum)
   channelCurrent,
 
   /// Total current from PowerHub device (sum of all channels)
@@ -67,6 +67,15 @@ enum StatusDataType {
     }
   }
 
+  /// Parse comma-separated channel list from parameter string
+  static List<int> parseChannelList(String params) {
+    final channels = params
+        .split(',')
+        .map((s) => int.parse(s.trim()))
+        .toList();
+    return channels;
+  }
+
   /// Validate parameters for this data type
   String? validateParameters(String? params) {
     if (!requiresParameters) {
@@ -79,14 +88,30 @@ enum StatusDataType {
 
     switch (this) {
       case StatusDataType.channelCurrent:
-        final channel = int.tryParse(params);
-        if (channel == null) {
-          return 'Channel parameter must be a number';
+        try {
+          final channels = parseChannelList(params);
+
+          // Individual channel validation
+          for (final channel in channels) {
+            if (channel < 0 || channel > 15) {
+              return 'Channel number $channel must be between 0 and 15';
+            }
+          }
+
+          // Duplicate channel detection
+          if (channels.length != channels.toSet().length) {
+            return 'Duplicate channels not allowed in sum parameters';
+          }
+
+          // Maximum channels limit
+          if (channels.length > 8) {
+            return 'Maximum 8 channels allowed in sum parameters';
+          }
+
+          return null;
+        } catch (e) {
+          return 'Channel parameter format error: ${e.toString()}';
         }
-        if (channel < 0 || channel > 15) {
-          return 'Channel number must be between 0 and 15';
-        }
-        return null;
 
       case StatusDataType.temperature:
         final zone = params.toUpperCase();
@@ -106,7 +131,7 @@ enum StatusDataType {
       case StatusDataType.voltage:
         return 'No parameters required';
       case StatusDataType.channelCurrent:
-        return 'Channel index (0-15)';
+        return 'Channel index or comma-separated list (e.g., "0", "1,2,3", max 8 channels)';
       case StatusDataType.totalCurrent:
         return 'No parameters required';
       case StatusDataType.temperature:

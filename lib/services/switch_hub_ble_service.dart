@@ -691,11 +691,21 @@ class SwitchHubBleService {
         return await _collectPowerHubVoltageData(service);
 
       case StatusDataType.channelCurrent:
-        final channel = int.tryParse(params ?? '0');
-        if (channel == null || channel < 0 || channel > 15) {
+        if (params == null || params.isEmpty) {
           return null;
         }
-        return await _collectPowerHubChannelCurrentData(service, channel);
+
+        // Check if this is a multi-channel parameter (contains comma)
+        if (params.contains(',')) {
+          return await _collectPowerHubChannelCurrentSumData(service, params);
+        } else {
+          // Single channel (existing behavior)
+          final channel = int.tryParse(params);
+          if (channel == null || channel < 0 || channel > 15) {
+            return null;
+          }
+          return await _collectPowerHubChannelCurrentData(service, channel);
+        }
 
       case StatusDataType.totalCurrent:
         return await _collectPowerHubTotalCurrentData(service);
@@ -740,6 +750,52 @@ class SwitchHubBleService {
         // For now, return a placeholder implementation
         final currentMa = _extractChannelCurrent(data, channel);
         return '${(currentMa / 1000).toStringAsFixed(3)}A';
+      }
+    }
+    return null;
+  }
+
+  /// Collect channel current sum data from PowerHub device
+  Future<String?> _collectPowerHubChannelCurrentSumData(BluetoothService service, String params) async {
+    try {
+      final channels = StatusDataType.parseChannelList(params);
+      double totalCurrentMa = 0.0;
+      int successfulChannels = 0;
+
+      for (final channel in channels) {
+        try {
+          final channelValue = await _collectSingleChannelCurrentData(service, channel);
+          if (channelValue != null) {
+            totalCurrentMa += channelValue;
+            successfulChannels++;
+          }
+        } catch (e) {
+          // Log error for individual channel but continue with others
+          debugPrint('Failed to collect current for channel $channel: $e');
+        }
+      }
+
+      if (successfulChannels == 0) {
+        return null; // All channels failed
+      }
+
+      // Return the sum in amperes with 3 decimal places
+      return '${(totalCurrentMa / 1000).toStringAsFixed(3)}A';
+    } catch (e) {
+      debugPrint('Error parsing channel parameters: $e');
+      return null;
+    }
+  }
+
+  /// Collect current data for a single channel (helper method)
+  Future<double?> _collectSingleChannelCurrentData(BluetoothService service, int channel) async {
+    const channelStatesUuid = '0000fff0-0000-1000-8000-00805f9b34fb';
+
+    for (final characteristic in service.characteristics) {
+      if (characteristic.uuid.toString().toUpperCase() == channelStatesUuid.toUpperCase()) {
+        final data = await characteristic.read();
+        final currentMa = _extractChannelCurrent(data, channel);
+        return currentMa.toDouble();
       }
     }
     return null;

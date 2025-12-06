@@ -157,7 +157,13 @@ class StatusSlotWidget extends StatelessWidget {
       case StatusDataType.voltage:
         return statusSlot.isLocal ? '输入电压' : '远程电压';
       case StatusDataType.channelCurrent:
-        return '通道${statusSlot.params ?? '0'}电流';
+        if (statusSlot.isMultiChannelCurrent) {
+          return statusSlot.defaultLabel.isNotEmpty
+              ? statusSlot.defaultLabel
+              : '通道电流';
+        } else {
+          return '通道${statusSlot.params ?? '0'}电流';
+        }
       case StatusDataType.totalCurrent:
         return '总电流';
       case StatusDataType.temperature:

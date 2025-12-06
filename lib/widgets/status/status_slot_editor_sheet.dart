@@ -952,7 +952,7 @@ class _StatusSlotConfigDialogState extends State<_StatusSlotConfigDialogContent>
   String _getParamHelper(StatusDataType dataType) {
     switch (dataType) {
       case StatusDataType.channelCurrent:
-        return '输入通道编号 (0-15)';
+        return '输入通道编号 (0-15) 或逗号分隔的通道列表求和 (例如: 0,1,2)，最多8个通道';
       case StatusDataType.temperature:
         return '输入温度区域: POWER 或 CONTROL';
       default:

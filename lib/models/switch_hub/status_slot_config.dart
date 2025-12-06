@@ -79,6 +79,31 @@ class StatusSlot {
   /// Checks if this status slot requires a remote connection
   bool get requiresRemoteConnection => !isLocal;
 
+  /// Checks if this status slot represents a multi-channel current sum
+  bool get isMultiChannelCurrent {
+    return dataType == StatusDataType.channelCurrent &&
+           params != null &&
+           params!.contains(',');
+  }
+
+  /// Gets the channel list for multi-channel current configurations
+  List<int>? get channelList {
+    if (!isMultiChannelCurrent) return null;
+    try {
+      return StatusDataType.parseChannelList(params!);
+    } catch (e) {
+      return null;
+    }
+  }
+
+  /// Gets a default label for multi-channel current configurations
+  String get defaultLabel {
+    if (!isMultiChannelCurrent) return '';
+    final channels = channelList;
+    if (channels == null || channels.isEmpty) return '';
+    return 'Channels ${channels.join(',')} Current';
+  }
+
   Map<String, dynamic> toJson() {
     return {
       'source_mac': sourceMac,

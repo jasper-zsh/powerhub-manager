@@ -85,7 +85,7 @@ void main() {
         params: '20', // Invalid channel number
       );
 
-      expect(statusSlot.validate(), 'Channel number must be between 0 and 15');
+      expect(statusSlot.validate(), 'Channel number 20 must be between 0 and 15');
     });
 
     test('validate returns error for invalid temperature zone', () {
@@ -96,6 +96,86 @@ void main() {
       );
 
       expect(statusSlot.validate(), 'Temperature zone must be "POWER" or "CONTROL"');
+    });
+
+    test('validate accepts multi-channel parameters', () {
+      const statusSlot = StatusSlot(
+        sourceMac: 'AA:BB:CC:DD:EE:FF',
+        dataType: StatusDataType.channelCurrent,
+        params: '0,1,2',
+      );
+
+      expect(statusSlot.validate(), isNull);
+    });
+
+    test('validate rejects invalid channel in multi-channel parameters', () {
+      const statusSlot = StatusSlot(
+        sourceMac: 'AA:BB:CC:DD:EE:FF',
+        dataType: StatusDataType.channelCurrent,
+        params: '0,16,2',
+      );
+
+      expect(statusSlot.validate(), 'Channel number 16 must be between 0 and 15');
+    });
+
+    test('validate rejects duplicate channels in multi-channel parameters', () {
+      const statusSlot = StatusSlot(
+        sourceMac: 'AA:BB:CC:DD:EE:FF',
+        dataType: StatusDataType.channelCurrent,
+        params: '0,1,0',
+      );
+
+      expect(statusSlot.validate(), 'Duplicate channels not allowed in sum parameters');
+    });
+
+    test('validate rejects too many channels in multi-channel parameters', () {
+      const statusSlot = StatusSlot(
+        sourceMac: 'AA:BB:CC:DD:EE:FF',
+        dataType: StatusDataType.channelCurrent,
+        params: '0,1,2,3,4,5,6,7,8',
+      );
+
+      expect(statusSlot.validate(), 'Maximum 8 channels allowed in sum parameters');
+    });
+
+    test('validate rejects malformed multi-channel parameters', () {
+      const statusSlot = StatusSlot(
+        sourceMac: 'AA:BB:CC:DD:EE:FF',
+        dataType: StatusDataType.channelCurrent,
+        params: '0,1.5,2',
+      );
+
+      expect(statusSlot.validate(), startsWith('Channel parameter format error:'));
+    });
+
+    test('validate accepts mixed order multi-channel parameters', () {
+      const statusSlot = StatusSlot(
+        sourceMac: 'AA:BB:CC:DD:EE:FF',
+        dataType: StatusDataType.channelCurrent,
+        params: '3,1,4',
+      );
+
+      expect(statusSlot.validate(), isNull);
+    });
+
+    test('validate accepts single channel with whitespace', () {
+      const statusSlot = StatusSlot(
+        sourceMac: 'AA:BB:CC:DD:EE:FF',
+        dataType: StatusDataType.channelCurrent,
+        params: ' 5 ',
+      );
+
+      expect(statusSlot.validate(), isNull);
+    });
+
+    test('validate accepts multi-channel with whitespace', () {
+      const statusSlot = StatusSlot(
+        sourceMac: 'AA:BB:CC:DD:EE:FF',
+        dataType: StatusDataType.channelCurrent,
+        params: ' 1 , 2 , 3 ',
+      );
+
+      expect(statusSlot.validate(), isNull);
     });
 
     test('isLocal returns true for LOCAL source', () {
