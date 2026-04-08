@@ -3,14 +3,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:app/screens/orchestration_screen.dart';
-import 'package:app/screens/saved_controller_management_screen.dart';
-import 'package:app/screens/device_control_screen.dart';
-import 'package:app/screens/monitoring_screen.dart';
-import 'package:app/screens/power_management_screen.dart';
-import 'package:app/screens/switchhub_monitoring_screen.dart';
+import 'package:app/screens/device_list_screen.dart';
+import 'package:app/screens/unified_monitoring_screen.dart';
 
 void main() {
-  // Enable debug print for development
   if (kDebugMode) {
     debugPrint('Starting PowerHub Manager app...');
   }
@@ -33,7 +29,7 @@ class MyApp extends ConsumerWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
         useMaterial3: true,
         navigationBarTheme: const NavigationBarThemeData(
-          height: 56, // 降低到56px，更紧凑的设计
+          height: 56,
           labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
           elevation: 3,
         ),
@@ -52,11 +48,8 @@ class MainNavigationShell extends ConsumerWidget {
 
     final pages = const [
       OrchestrationScreen(),
-      SavedControllerManagementScreen(),
-      DeviceControlScreen(),
-      MonitoringScreen(),
-      PowerManagementScreen(),
-      SwitchHubMonitoringScreen(),
+      DeviceListScreen(),
+      UnifiedMonitoringScreen(),
     ];
 
     return Scaffold(
@@ -67,32 +60,17 @@ class MainNavigationShell extends ConsumerWidget {
           NavigationDestination(
             icon: Icon(Icons.toggle_on_outlined),
             selectedIcon: Icon(Icons.toggle_on),
-            label: 'Orchestrate',
+            label: '开关编排',
           ),
           NavigationDestination(
-            icon: Icon(Icons.storage_outlined),
-            selectedIcon: Icon(Icons.storage),
-            label: 'Devices',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.tune_outlined),
-            selectedIcon: Icon(Icons.tune),
-            label: 'Control',
+            icon: Icon(Icons.devices_outlined),
+            selectedIcon: Icon(Icons.devices),
+            label: '设备管理',
           ),
           NavigationDestination(
             icon: Icon(Icons.monitor_heart_outlined),
             selectedIcon: Icon(Icons.monitor_heart),
-            label: 'Monitor',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.power_settings_new_outlined),
-            selectedIcon: Icon(Icons.power_settings_new),
-            label: 'Power',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.bluetooth_searching_outlined),
-            selectedIcon: Icon(Icons.bluetooth_searching),
-            label: 'SwitchHub',
+            label: '设备监控',
           ),
         ],
         onDestinationSelected: (index) {
@@ -103,5 +81,4 @@ class MainNavigationShell extends ConsumerWidget {
   }
 }
 
-// Provider for bottom navigation index
 final bottomNavigationBarIndexProvider = StateProvider<int>((ref) => 0);
