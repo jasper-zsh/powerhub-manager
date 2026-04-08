@@ -33,9 +33,12 @@ class _SwitchHubDetailScreenState extends ConsumerState<SwitchHubDetailScreen> {
       await controller.startScan();
     }
     final state = ref.read(switchHubControllerProvider);
-    // Find matching device by remote ID matching controllerId
+    // Strip 'sh_' prefix to get raw MAC address for BLE matching
+    final macAddress = widget.controllerId.startsWith('sh_')
+        ? widget.controllerId.substring(3)
+        : widget.controllerId;
     final match = state.discoveredDevices.where(
-      (d) => d.remoteId.str == widget.controllerId,
+      (d) => d.remoteId.str == macAddress,
     );
     if (match.isNotEmpty) {
       setState(() {

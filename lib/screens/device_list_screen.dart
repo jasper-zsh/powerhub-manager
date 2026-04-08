@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:app/controllers/saved_controller_controller.dart';
 import 'package:app/controllers/connection_session_controller.dart';
 import 'package:app/controllers/discovery_controller.dart';
+import 'package:app/providers/switch_hub_provider_riverpod.dart';
 import 'package:app/models/saved_controller.dart';
 import 'package:app/models/pwm_controller.dart';
 import 'package:app/screens/powerhub_detail_screen.dart';
@@ -217,7 +218,7 @@ class DeviceListScreen extends ConsumerWidget {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                const Text('扫描附近的 PowerHub 设备，或添加一个样例设备进行测试。', style: TextStyle(fontSize: 14)),
+                const Text('选择设备类型并扫描，或添加一个样例设备。', style: TextStyle(fontSize: 14)),
                 const SizedBox(height: 16),
                 TextField(
                   controller: aliasController,
@@ -236,11 +237,24 @@ class DeviceListScreen extends ConsumerWidget {
                       child: ElevatedButton.icon(
                         onPressed: () => _showDeviceSelectionDialog(context, ref, aliasController.text),
                         icon: const Icon(Icons.bluetooth_searching),
-                        label: const Text('扫描设备'),
+                        label: const Text('PowerHub'),
                         style: ElevatedButton.styleFrom(backgroundColor: Colors.blue, foregroundColor: Colors.white),
                       ),
                     ),
-                    const SizedBox(width: 12),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: ElevatedButton.icon(
+                        onPressed: () => _showSwitchHubSelectionDialog(context, ref, aliasController.text),
+                        icon: const Icon(Icons.bluetooth_searching),
+                        label: const Text('SwitchHub'),
+                        style: ElevatedButton.styleFrom(backgroundColor: Colors.purple, foregroundColor: Colors.white),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
                     Expanded(
                       child: OutlinedButton.icon(
                         onPressed: () => _addSampleController(context, ref, aliasController.text, notesController.text),
@@ -259,6 +273,126 @@ class DeviceListScreen extends ConsumerWidget {
         ),
       ),
     );
+  }
+
+  void _showSwitchHubSelectionDialog(BuildContext context, WidgetRef ref, String alias) {
+    showDialog(
+      context: context,
+      builder: (context) => Consumer(
+        builder: (context, ref, child) {
+          final switchHubState = ref.watch(switchHubControllerProvider);
+          return AlertDialog(
+            title: const Text('扫描 SwitchHub 设备'),
+            content: SizedBox(
+              width: double.maxFinite,
+              height: 450,
+              child: _buildSwitchHubSelectionContent(context, ref, switchHubState, alias),
+            ),
+            actions: [
+              TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('取消')),
+              if (!switchHubState.isScanning)
+                ElevatedButton.icon(
+                  onPressed: () => ref.read(switchHubControllerProvider.notifier).startScan(),
+                  icon: const Icon(Icons.bluetooth_searching),
+                  label: const Text('扫描'),
+                  style: ElevatedButton.styleFrom(backgroundColor: Colors.purple, foregroundColor: Colors.white),
+                ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildSwitchHubSelectionContent(BuildContext context, WidgetRef ref, switchHubState, String alias) {
+    if (switchHubState.isScanning && switchHubState.discoveredDevices.isEmpty) {
+      return const Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            SizedBox(width: 24, height: 24, child: CircularProgressIndicator()),
+            SizedBox(height: 16),
+            Text('正在搜索 SwitchHub 设备...'),
+          ],
+        ),
+      );
+    }
+
+    if (switchHubState.discoveredDevices.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.bluetooth_disabled, size: 48, color: Colors.grey),
+            const SizedBox(height: 16),
+            Text('未发现 SwitchHub 设备', style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 8),
+            const Text('请确认 SwitchHub 设备已开机且在附近', style: TextStyle(fontSize: 12, color: Colors.grey)),
+          ],
+        ),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('可用设备 (${switchHubState.discoveredDevices.length})', style: const TextStyle(fontWeight: FontWeight.w500, fontSize: 14)),
+        const SizedBox(height: 8),
+        Expanded(
+          child: ListView.builder(
+            itemCount: switchHubState.discoveredDevices.length,
+            itemBuilder: (context, index) {
+              final device = switchHubState.discoveredDevices[index];
+              final displayName = device.platformName.isNotEmpty ? device.platformName : 'SwitchHub';
+              return Card(
+                margin: const EdgeInsets.symmetric(vertical: 4),
+                child: ListTile(
+                  leading: CircleAvatar(
+                    backgroundColor: Colors.purple.withOpacity(0.1),
+                    child: const Icon(Icons.bluetooth_searching, color: Colors.purple, size: 20),
+                  ),
+                  title: Text(displayName, style: const TextStyle(fontWeight: FontWeight.w500)),
+                  subtitle: Text('MAC: ${device.remoteId.str}'),
+                  trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+                  onTap: () {
+                    Navigator.of(context).pop();
+                    Navigator.of(context).pop(); // Close both dialogs
+                    _addSwitchHubDevice(context, ref, device, alias);
+                  },
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  void _addSwitchHubDevice(BuildContext context, WidgetRef ref, dynamic device, String alias) async {
+    try {
+      final macAddress = device.remoteId.str;
+      final displayName = device.platformName.isNotEmpty ? device.platformName : 'SwitchHub';
+      final controllerAlias = alias.isEmpty ? displayName : alias;
+
+      await ref.read(savedControllerControllerProvider.notifier).createController(
+        controllerId: 'sh_$macAddress',
+        alias: controllerAlias,
+        notes: 'SwitchHub device added on ${DateTime.now().toString().substring(0, 19)}\nMAC: $macAddress',
+        deviceCapabilities: const DeviceCapabilities(channels: 0, supportsPresets: false),
+      );
+
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('$controllerAlias (SwitchHub) 添加成功'), backgroundColor: Colors.green),
+        );
+      }
+    } catch (error) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('添加 SwitchHub 设备失败: $error'), backgroundColor: Colors.red),
+        );
+      }
+    }
   }
 
   void _showDeviceSelectionDialog(BuildContext context, WidgetRef ref, String alias) {
