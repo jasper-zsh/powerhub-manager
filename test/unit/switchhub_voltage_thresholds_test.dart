@@ -13,8 +13,8 @@ void main() {
 
     test('should parse 4-byte threshold data correctly', () {
       // Test data: [sleep_lo, sleep_hi, wake_lo, wake_hi]
-      // Sleep: 3300mV (0xCC, 0x0C), Wake: 3600mV (0x10, 0x0E)
-      final data = [0xCC, 0x0C, 0x10, 0x0E];
+      // Sleep: 3300mV (0xE4, 0x0C), Wake: 3600mV (0x10, 0x0E)
+      final data = [0xE4, 0x0C, 0x10, 0x0E];
 
       final thresholds = SwitchHubVoltageThresholds.fromBytes(data);
 
@@ -52,21 +52,20 @@ void main() {
       expect(invalidThresholds.isValid(), isFalse);
       expect(invalidThresholds.getValidationError(), isNotNull);
 
-      // Invalid: voltage too low
+      // Valid: no upper/lower limit enforcement, any values with wake > sleep are valid
       const lowThresholds = SwitchHubVoltageThresholds(
         sleepVoltageMv: 2000,
         wakeVoltageMv: 2500,
       );
-      expect(lowThresholds.isValid(), isFalse);
-      expect(lowThresholds.getValidationError(), contains('between'));
+      expect(lowThresholds.isValid(), isTrue);
+      expect(lowThresholds.getValidationError(), isNull);
 
-      // Invalid: voltage too high
       const highThresholds = SwitchHubVoltageThresholds(
         sleepVoltageMv: 4500,
         wakeVoltageMv: 4600,
       );
-      expect(highThresholds.isValid(), isFalse);
-      expect(highThresholds.getValidationError(), contains('between'));
+      expect(highThresholds.isValid(), isTrue);
+      expect(highThresholds.getValidationError(), isNull);
     });
 
     test('should create copy with updated values', () {
@@ -97,13 +96,7 @@ void main() {
     });
 
     test('should provide safe voltage utilities', () {
-      expect(SwitchHubVoltageThresholds.getSafeSleepVoltage(2500), equals(3000)); // clamped to min
-      expect(SwitchHubVoltageThresholds.getSafeSleepVoltage(4500), equals(3900)); // clamped to max
-      expect(SwitchHubVoltageThresholds.getSafeSleepVoltage(3500), equals(3500)); // unchanged
-
-      expect(SwitchHubVoltageThresholds.getSafeWakeVoltage(2500), equals(3100)); // clamped to min
-      expect(SwitchHubVoltageThresholds.getSafeWakeVoltage(4500), equals(4200)); // clamped to max
-      expect(SwitchHubVoltageThresholds.getSafeWakeVoltage(3800), equals(3800)); // unchanged
+      // getSafeSleepVoltage and getSafeWakeVoltage removed - no more range clamping
     });
 
     test('should throw error for invalid data length', () {

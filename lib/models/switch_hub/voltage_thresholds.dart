@@ -40,31 +40,13 @@ class SwitchHubVoltageThresholds {
     ];
   }
 
-  /// Validate voltage thresholds are within acceptable range
+  /// Validate voltage thresholds
   bool isValid() {
-    const minVoltage = 3000;
-    const maxVoltage = 4200;
-
-    return sleepVoltageMv >= minVoltage &&
-        sleepVoltageMv <= maxVoltage &&
-        wakeVoltageMv >= minVoltage &&
-        wakeVoltageMv <= maxVoltage &&
-        wakeVoltageMv > sleepVoltageMv;
+    return wakeVoltageMv > sleepVoltageMv;
   }
 
   /// Get validation error message if invalid
   String? getValidationError() {
-    const minVoltage = 3000;
-    const maxVoltage = 4200;
-
-    if (sleepVoltageMv < minVoltage || sleepVoltageMv > maxVoltage) {
-      return 'Sleep voltage must be between ${minVoltage}mV and ${maxVoltage}mV';
-    }
-
-    if (wakeVoltageMv < minVoltage || wakeVoltageMv > maxVoltage) {
-      return 'Wake voltage must be between ${minVoltage}mV and ${maxVoltage}mV';
-    }
-
     if (wakeVoltageMv <= sleepVoltageMv) {
       return 'Wake voltage must be higher than sleep voltage';
     }
@@ -120,13 +102,4 @@ class SwitchHubVoltageThresholds {
     );
   }
 
-  /// Get safe sleep voltage within acceptable range
-  static int getSafeSleepVoltage(int voltageMv) {
-    return voltageMv.clamp(3000, 3900);
-  }
-
-  /// Get safe wake voltage within acceptable range
-  static int getSafeWakeVoltage(int voltageMv) {
-    return voltageMv.clamp(3100, 4200);
-  }
 }
