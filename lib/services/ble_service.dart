@@ -234,11 +234,18 @@ class BLEService {
   Future<void> connect(String deviceId) async {
     debugPrint('Attempting to connect to device: $deviceId');
 
+    // Strip 'sh_' prefix for SwitchHub devices to get raw MAC address
+    final macAddress = deviceId.startsWith('sh_')
+        ? deviceId.substring(3)
+        : deviceId;
+
     try {
+      await _requestPermissions();
+
       // If already connected to a different device, disconnect first
       if (_connectedDevice != null &&
           _connectedDevice!.isConnected &&
-          _connectedDevice!.remoteId.str != deviceId) {
+          _connectedDevice!.remoteId.str != macAddress) {
         debugPrint(
           'Disconnecting from current device before connecting to new one',
         );
@@ -246,9 +253,9 @@ class BLEService {
       }
 
       // If already connected to the same device, just return
-      if (_connectedDevice != null && _connectedDevice!.remoteId.str == deviceId) {
+      if (_connectedDevice != null && _connectedDevice!.remoteId.str == macAddress) {
         if (_connectedDevice!.isConnected) {
-          debugPrint('Already connected to device: $deviceId');
+          debugPrint('Already connected to device: $macAddress');
           // Still rediscover services to ensure we have the correct references
           await _discoverServices();
           return;
@@ -261,8 +268,8 @@ class BLEService {
       }
 
       // Create new connection
-      debugPrint('Creating new BluetoothDevice instance for: $deviceId');
-      _connectedDevice = BluetoothDevice.fromId(deviceId);
+      debugPrint('Creating new BluetoothDevice instance for: $macAddress');
+      _connectedDevice = BluetoothDevice.fromId(macAddress);
 
       debugPrint('Attempting to connect to device...');
       await _connectedDevice!.connect(timeout: Duration(seconds: 10));

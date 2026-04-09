@@ -98,11 +98,14 @@ class DeviceListScreen extends ConsumerWidget {
         ),
         title: Row(
           children: [
-            Text(
-              controller.alias,
-              style: TextStyle(
-                fontWeight: FontWeight.w500,
-                color: isConnected ? Colors.green : null,
+            Flexible(
+              child: Text(
+                controller.alias,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontWeight: FontWeight.w500,
+                  color: isConnected ? Colors.green : null,
+                ),
               ),
             ),
             const SizedBox(width: 8),
