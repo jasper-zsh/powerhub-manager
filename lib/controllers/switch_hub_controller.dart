@@ -440,14 +440,6 @@ class SwitchHubController extends StateNotifier<SwitchHubState> {
     SwitchHubVoltageThresholds thresholds,
   ) async {
     try {
-      // Validate thresholds
-      if (!thresholds.isValid()) {
-        state = state.copyWith(
-          errorMessage: '无效的电压阈值: ${thresholds.getValidationError()}',
-        );
-        return false;
-      }
-
       state = state.copyWith(
         statusMessage: '设置电压阈值中...',
       );

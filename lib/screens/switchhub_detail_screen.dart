@@ -45,9 +45,8 @@ class _SwitchHubDetailScreenState extends ConsumerState<SwitchHubDetailScreen> {
         _device = match.first;
         _initialized = true;
       });
-      // Auto-read thresholds and config
+      // Auto-read thresholds
       await controller.readVoltageThresholds(_device!);
-      await controller.readConfigWithChunks(_device!);
     } else {
       setState(() { _initialized = true; });
     }

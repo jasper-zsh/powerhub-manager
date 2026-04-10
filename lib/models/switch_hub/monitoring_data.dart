@@ -41,27 +41,26 @@ class SwitchHubMonitoringData {
   /// Check if temperature sensor is available (bit1=0 indicates no temperature)
   bool get hasTemperatureSensor => (statusFlags & 0x02) == 0;
 
-  /// Get battery level percentage (approximate)
+  /// Get battery level percentage (approximate, 12V automotive)
   double get batteryPercentage {
-    // Approximate battery level based on voltage
-    // 4.2V = 100%, 3.0V = 0%
-    const minVoltage = 3000;
-    const maxVoltage = 4200;
+    // 12V automotive: 10.5V = 0%, 14.4V = 100%
+    const minVoltage = 10500;
+    const maxVoltage = 14400;
     final percentage = ((inputVoltageMv - minVoltage) / (maxVoltage - minVoltage)) * 100;
     return percentage.clamp(0.0, 100.0);
   }
 
   /// Check if voltage is critically low
-  bool get isVoltageCritical => inputVoltageMv < 3200;
+  bool get isVoltageCritical => inputVoltageMv < 10500;
 
   /// Check if voltage is low
-  bool get isVoltageLow => inputVoltageMv < 3400;
+  bool get isVoltageLow => inputVoltageMv < 11800;
 
   /// Check if voltage is normal
-  bool get isVoltageNormal => inputVoltageMv >= 3400 && inputVoltageMv <= 4100;
+  bool get isVoltageNormal => inputVoltageMv >= 11800 && inputVoltageMv <= 14400;
 
   /// Check if voltage is high
-  bool get isVoltageHigh => inputVoltageMv > 4100;
+  bool get isVoltageHigh => inputVoltageMv > 14400;
 
   @override
   String toString() {

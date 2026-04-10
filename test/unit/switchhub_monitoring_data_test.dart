@@ -5,49 +5,65 @@ void main() {
   group('SwitchHubMonitoringData', () {
     test('should parse 4-byte monitoring data correctly', () {
       // Test data: [voltage_lo, voltage_hi, status, reserved]
-      // Voltage: 3500mV (0xD8, 0x0A), Status: 0x00, Reserved: 0x00
-      final data = [0xD8, 0x0A, 0x00, 0x00];
+      // Voltage: 12600mV (0x34, 0x31), Status: 0x00, Reserved: 0x00
+      final data = [0x38, 0x31, 0x00, 0x00]; // 12600 = 0x3138
 
       final monitoringData = SwitchHubMonitoringData.fromBytes(data);
 
-      expect(monitoringData.inputVoltageMv, equals(3500));
+      expect(monitoringData.inputVoltageMv, equals(12600));
       expect(monitoringData.statusFlags, equals(0));
       expect(monitoringData.reserved, equals(0));
       expect(monitoringData.hasTemperatureSensor, isTrue);
     });
 
-    test('should calculate battery percentage correctly', () {
-      final data = [0xD8, 0x0A, 0x00, 0x00]; // 3500mV
-      final monitoringData = SwitchHubMonitoringData.fromBytes(data);
-
-      // 3500mV should be approximately 29.2% (3500-3000)/(4200-3000)*100
-      expect(monitoringData.batteryPercentage, closeTo(29.2, 0.1));
+    test('should calculate battery percentage correctly for 12V automotive', () {
+      // 12600mV = (12600-10500)/(14400-10500)*100 ≈ 53.8%
+      final monitoringData = SwitchHubMonitoringData(
+        inputVoltageMv: 12600,
+        statusFlags: 0,
+        reserved: 0,
+      );
+      expect(monitoringData.batteryPercentage, closeTo(53.8, 0.1));
     });
 
-    test('should identify voltage status correctly', () {
-      // Test critical voltage (3200mV)
-      final criticalData = [0x80, 0x0C, 0x00, 0x00]; // 3200mV
-      final criticalMonitoring = SwitchHubMonitoringData.fromBytes(criticalData);
+    test('should identify voltage status correctly for 12V automotive', () {
+      // Test critical voltage (10000mV < 10500mV)
+      final criticalMonitoring = SwitchHubMonitoringData(
+        inputVoltageMv: 10000,
+        statusFlags: 0,
+        reserved: 0,
+      );
       expect(criticalMonitoring.isVoltageCritical, isTrue);
       expect(criticalMonitoring.isVoltageLow, isTrue);
       expect(criticalMonitoring.isVoltageNormal, isFalse);
 
-      // Test normal voltage (3800mV)
-      final normalData = [0xD0, 0x0E, 0x00, 0x00]; // 3800mV
-      final normalMonitoring = SwitchHubMonitoringData.fromBytes(normalData);
+      // Test normal voltage (12600mV)
+      final normalMonitoring = SwitchHubMonitoringData(
+        inputVoltageMv: 12600,
+        statusFlags: 0,
+        reserved: 0,
+      );
       expect(normalMonitoring.isVoltageNormal, isTrue);
       expect(normalMonitoring.isVoltageLow, isFalse);
       expect(normalMonitoring.isVoltageCritical, isFalse);
+
+      // Test high voltage (15000mV > 14400mV)
+      final highMonitoring = SwitchHubMonitoringData(
+        inputVoltageMv: 15000,
+        statusFlags: 0,
+        reserved: 0,
+      );
+      expect(highMonitoring.isVoltageHigh, isTrue);
     });
 
     test('should handle temperature sensor status correctly', () {
       // Bit1=0 indicates no temperature sensor
-      final noTempData = [0xD8, 0x0A, 0x00, 0x00]; // status = 0x00
+      final noTempData = [0x38, 0x31, 0x00, 0x00]; // status = 0x00
       final noTempMonitoring = SwitchHubMonitoringData.fromBytes(noTempData);
       expect(noTempMonitoring.hasTemperatureSensor, isTrue); // bit1=0 = no temp sensor
 
       // Bit1=1 indicates temperature sensor available
-      final tempData = [0xD8, 0x0A, 0x02, 0x00]; // status = 0x02
+      final tempData = [0x38, 0x31, 0x02, 0x00]; // status = 0x02
       final tempMonitoring = SwitchHubMonitoringData.fromBytes(tempData);
       expect(tempMonitoring.hasTemperatureSensor, isFalse); // bit1=1 = temp sensor available
     });

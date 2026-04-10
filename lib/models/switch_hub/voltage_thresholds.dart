@@ -9,10 +9,10 @@ class SwitchHubVoltageThresholds {
     required this.wakeVoltageMv,
   });
 
-  /// Default voltage thresholds
+  /// Default voltage thresholds (12V automotive power supply)
   static const SwitchHubVoltageThresholds defaultThresholds = SwitchHubVoltageThresholds(
-    sleepVoltageMv: 3300,
-    wakeVoltageMv: 3600,
+    sleepVoltageMv: 11000,
+    wakeVoltageMv: 12500,
   );
 
   /// Parse 4-byte voltage threshold data
@@ -38,20 +38,6 @@ class SwitchHubVoltageThresholds {
       wakeVoltageMv & 0xFF,
       (wakeVoltageMv >> 8) & 0xFF,
     ];
-  }
-
-  /// Validate voltage thresholds
-  bool isValid() {
-    return wakeVoltageMv > sleepVoltageMv;
-  }
-
-  /// Get validation error message if invalid
-  String? getValidationError() {
-    if (wakeVoltageMv <= sleepVoltageMv) {
-      return 'Wake voltage must be higher than sleep voltage';
-    }
-
-    return null;
   }
 
   /// Create copy with updated values
@@ -89,8 +75,6 @@ class SwitchHubVoltageThresholds {
     return {
       'sleepVoltageMv': sleepVoltageMv,
       'wakeVoltageMv': wakeVoltageMv,
-      'isValid': isValid(),
-      'validationError': getValidationError(),
     };
   }
 

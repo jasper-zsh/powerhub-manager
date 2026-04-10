@@ -6,9 +6,8 @@ void main() {
     test('should create default thresholds correctly', () {
       const thresholds = SwitchHubVoltageThresholds.defaultThresholds;
 
-      expect(thresholds.sleepVoltageMv, equals(3300));
-      expect(thresholds.wakeVoltageMv, equals(3600));
-      expect(thresholds.isValid(), isTrue);
+      expect(thresholds.sleepVoltageMv, equals(11000));
+      expect(thresholds.wakeVoltageMv, equals(12500));
     });
 
     test('should parse 4-byte threshold data correctly', () {
@@ -35,37 +34,22 @@ void main() {
       expect(reconstructed.wakeVoltageMv, equals(original.wakeVoltageMv));
     });
 
-    test('should validate thresholds correctly', () {
-      // Valid thresholds
-      const validThresholds = SwitchHubVoltageThresholds(
-        sleepVoltageMv: 3300,
-        wakeVoltageMv: 3600,
+    test('should allow any voltage values without validation', () {
+      // Any combination of values should be accepted
+      const thresholds1 = SwitchHubVoltageThresholds(
+        sleepVoltageMv: 11000,
+        wakeVoltageMv: 12500,
       );
-      expect(validThresholds.isValid(), isTrue);
-      expect(validThresholds.getValidationError(), isNull);
+      expect(thresholds1.sleepVoltageMv, equals(11000));
+      expect(thresholds1.wakeVoltageMv, equals(12500));
 
-      // Invalid: wake voltage not higher than sleep
-      const invalidThresholds = SwitchHubVoltageThresholds(
-        sleepVoltageMv: 3600,
-        wakeVoltageMv: 3300,
+      // Even wake < sleep is allowed (no validation)
+      const thresholds2 = SwitchHubVoltageThresholds(
+        sleepVoltageMv: 13000,
+        wakeVoltageMv: 11000,
       );
-      expect(invalidThresholds.isValid(), isFalse);
-      expect(invalidThresholds.getValidationError(), isNotNull);
-
-      // Valid: no upper/lower limit enforcement, any values with wake > sleep are valid
-      const lowThresholds = SwitchHubVoltageThresholds(
-        sleepVoltageMv: 2000,
-        wakeVoltageMv: 2500,
-      );
-      expect(lowThresholds.isValid(), isTrue);
-      expect(lowThresholds.getValidationError(), isNull);
-
-      const highThresholds = SwitchHubVoltageThresholds(
-        sleepVoltageMv: 4500,
-        wakeVoltageMv: 4600,
-      );
-      expect(highThresholds.isValid(), isTrue);
-      expect(highThresholds.getValidationError(), isNull);
+      expect(thresholds2.sleepVoltageMv, equals(13000));
+      expect(thresholds2.wakeVoltageMv, equals(11000));
     });
 
     test('should create copy with updated values', () {

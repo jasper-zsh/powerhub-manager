@@ -37,11 +37,11 @@ class SwitchHubBleService {
   static const int attErrReqNotSupported = 0x06;
   static const int attErrUnlikely = 0x0E;
 
-  // Voltage thresholds validation constants
-  static const int minVoltageMv = 3000;
-  static const int maxVoltageMv = 4200;
-  static const int defaultSleepVoltageMv = 3300;
-  static const int defaultWakeVoltageMv = 3600;
+  // Voltage thresholds constants (12V automotive power supply)
+  static const int minVoltageMv = 6000;
+  static const int maxVoltageMv = 16000;
+  static const int defaultSleepVoltageMv = 11000;
+  static const int defaultWakeVoltageMv = 12500;
 
   // Public access for enhanced font upload service
   static Guid get serviceUuidPublic => serviceUuid;
@@ -374,11 +374,6 @@ class SwitchHubBleService {
     try {
       final characteristic = await _locatePowerManagementCharacteristic(device);
 
-      // Validate voltage range
-      if (voltageMv < minVoltageMv || voltageMv > maxVoltageMv) {
-        throw ArgumentError('Voltage must be between ${minVoltageMv}mV and ${maxVoltageMv}mV');
-      }
-
       // Build command: [0x01][voltage(2B)]
       final command = BytesBuilder()
         ..add([0x01]) // Set sleep voltage threshold command
@@ -401,11 +396,6 @@ class SwitchHubBleService {
     try {
       final characteristic = await _locatePowerManagementCharacteristic(device);
 
-      // Validate voltage range
-      if (voltageMv < minVoltageMv || voltageMv > maxVoltageMv) {
-        throw ArgumentError('Voltage must be between ${minVoltageMv}mV and ${maxVoltageMv}mV');
-      }
-
       // Build command: [0x02][voltage(2B)]
       final command = BytesBuilder()
         ..add([0x02]) // Set wake voltage threshold command
@@ -424,11 +414,6 @@ class SwitchHubBleService {
     BluetoothDevice device,
     SwitchHubVoltageThresholds thresholds,
   ) async {
-    // Validate thresholds
-    if (!thresholds.isValid()) {
-      throw ArgumentError(thresholds.getValidationError() ?? 'Invalid voltage thresholds');
-    }
-
     await device.connect(autoConnect: false);
     try {
       final characteristic = await _locatePowerManagementCharacteristic(device);
@@ -454,7 +439,12 @@ class SwitchHubBleService {
     }
   }
 
-  /// Enhanced configuration reading with chunked transfer support
+  /// Read configuration from 0xFFF3.
+  ///
+  /// The BLE stack handles Read Blob (ATT long read) automatically, so a
+  /// single [characteristic.read()] returns the full JSON even when it
+  /// exceeds a single MTU. The chunked framing header
+  /// `[seq(2B)][total(2B)]` only exists on the **write** path.
   Future<SwitchHubConfig> readConfigWithChunks(
     BluetoothDevice device, {
     int chunkSize = 200,
@@ -463,40 +453,15 @@ class SwitchHubBleService {
     await device.connect(autoConnect: false);
     try {
       final characteristic = await _locateConfigCharacteristic(device);
-
-      // First read to get metadata and size
-      final initialData = await characteristic.read();
-      if (initialData.isEmpty) {
-        throw Exception('EMPTY_CONFIG_METADATA');
+      final raw = await characteristic.read();
+      if (raw.isEmpty) {
+        throw Exception('EMPTY_SWITCHHUB_CONFIG');
       }
-
-      // Parse metadata from the beginning of the data
-      // Format: [chunk_seq(2B)][total_chunks(2B)][payload...]
-      final totalChunks = (initialData[2] | (initialData[3] << 8));
-
-      if (totalChunks == 1) {
-        // Single chunk configuration
-        final payload = initialData.sublist(4);
-        final decoded = utf8.decode(payload);
-        final dynamic jsonPayload = jsonDecode(decoded);
-        return SwitchHubConfig.fromJson(Map<String, dynamic>.from(jsonPayload as Map));
-      }
-
-      // Multi-chunk configuration - read remaining chunks
-      final allChunks = <List<int>>[];
-      allChunks.add(initialData.sublist(4)); // Add first chunk payload
-
-      // Note: FlutterBluePlus doesn't support offset-based reads directly
-      // For now, we'll read all data in one go. In a real implementation,
-      // you might need to use a different approach or native platform code.
-
-      // For this implementation, we'll assume the initial read contains all data
-      // and chunk it appropriately based on the expected format
-
-      final totalPayload = allChunks.expand((chunk) => chunk).toList();
-      final decoded = utf8.decode(totalPayload);
+      final decoded = utf8.decode(raw);
       final dynamic jsonPayload = jsonDecode(decoded);
-      return SwitchHubConfig.fromJson(Map<String, dynamic>.from(jsonPayload as Map));
+      return SwitchHubConfig.fromJson(
+        Map<String, dynamic>.from(jsonPayload as Map),
+      );
     } catch (e) {
       throw Exception('Failed to read configuration: $e');
     } finally {
